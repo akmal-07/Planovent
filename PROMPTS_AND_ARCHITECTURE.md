@@ -51,9 +51,9 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 | Rubric Evaluation Dimension | Implementation in Celebration Planner |
 | :--- | :--- |
 | **Problem Statement Alignment** | Benchmark **₹8,00,000 / 200 Guests / 4-Month** Hyderabad celebration preset. 5 distinct multi-day functions (`Haldi`, `Mehndi`, `Sangeet`, `Wedding Ceremony`, `Reception`). Multi-attribute prioritization (`high`, `medium`, `low`). Dynamic relative dates (`+120` to `+123` days) prevent stale presets. |
-| **Budget Transparency** | Strict 3-Number Formula: $\text{Effective} = \text{actual} \mathbin{??} \text{estimated}$. Clear tracking of committed spend, paid amounts, balance due, and buffer cushion in `en-IN` formatting (`formatINR`, `formatCompactINR`). |
+| **Budget Transparency** | Strict 3-Number Formula: `Effective = actual ?? estimated`. Clear tracking of committed spend, paid amounts, balance due, and buffer cushion in `en-IN` formatting (`formatINR`, `formatCompactINR`). |
 | **Priority-Aware Trade-Offs** | When budget cuts or elasticity deficits are applied, flexible `'low'` priority categories (Decor, Invites) absorb reductions first, while non-negotiable `'high'` priority categories (Catering, Photography) are shielded. Unresolvable deficits are flagged when High/Locked exceed target. |
-| **Real Vendor Comparator** | Archetype-based slots comparing real user quotes. Side-by-side quote comparison immediately visible on initial load. Finalizing a vendor quote synchronizes confirmed pricing into the category's `actual` spend while strictly forbidding the LLM from inventing fake business names. |
+| **Real Vendor Comparator** | Archetype-based slots comparing real user quotes. Side-by-side quote comparison immediately visible on initial load. Finalizing a vendor quote synchronizes confirmed pricing into the category's `actual` spend; the AI schema has no vendor-name or contact fields; real vendor names exist solely in user-entered quotes. |
 | **What-If Elasticity Modeling** | Instant 0ms client-side math for guest counts (50–800), target budgets (₹2L–₹50L), and celebration style tiers (`0.85x`, `1.0x`, `1.25x`) with Hamilton–Hare Largest-Remainder integer rupee allocation. |
 | **Category Scaling Heuristics** | `per_guest` (linear guest ratio), `step` (discrete linear step-interval heuristic: `Math.trunc(delta / stepSize)`), and `fixed` (invariant to guests). |
 | **Operational Risk Radar** | 6 deterministic diagnostic rules evaluating over-budget conditions, category overruns (>15%), overdue milestones, blocked DAG tasks, unassigned leads, and pending vendors with 1-click action fixes. Opens with balanced 75–85 ("Needs Attention") health score. |
@@ -101,6 +101,40 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 - **Key Decision 4 (Unified Deficit Math & Unresolvable Deficit)**: Unified `cutBudgetByPercentage` and `runWhatIfSimulation` via `absorbDeficitByPriority`. Mathematically unresolvable deficits surface an explicit warning banner while strictly protecting High-Priority categories.
 - **Key Decision 5 (Relative Preset Dates & Initial Radar Score)**: Dynamic relative dates (`getRelativeDate(offset)`) ensure the 4-month preset never goes stale, opening with realistic side-by-side quotes and a 75–85 ("Needs Attention") health score.
 - **Key Decision 6 (Unclipped Print Layout)**: Added a top-level `<div className="hidden print:block">` executive layout, hiding the interactive shell and modal backdrops on print to eliminate clipping.
+
+---
+
+## Review Loop: Issues Found and Hardened
+
+During development across Bits 1 through 4.5, rigorous review loops identified critical failure modes common to LLM-driven event systems. Each was systematically hardened:
+
+1. **Elimination of Fake Demo Mode**: Removed the mock fallback completely from `api/` and client state hooks (`useWeddingPlan.ts`, `AiCopilotBar.tsx`) so API failures surface transparently as typed errors (`MISSING_API_KEY`, `MISSING_MODEL_CONFIG`, `GEMINI_TIMEOUT`, `GEMINI_UPSTREAM_ERROR`) with clear user banners, leaving the existing plan 100% untouched without faking AI output.
+2. **Structured Tombstones vs. ID Loss**: Replaced ID-only tombstones with structured records `{ id, matchKey, label }` (where `matchKey` is normalized whitespace, lowercase, and punctuation-stripped) and added a "Do Not Propose" prompt clause because fresh LLM generations assign brand-new IDs to synonymous items.
+3. **Deterministic Rupees via Largest-Remainder**: Moved budget math out of the prompt into pure TypeScript via the Hamilton–Hare Largest-Remainder Method, requiring the LLM to output only integer `sharePercent` values summing to 100% to eliminate rounding drift and floating fractions.
+4. **Multi-Quote Vendor Slot Model**: Refactored `VendorSlot` to store an array of user-entered `quotes: VendorQuote[]` for side-by-side comparison. Finalizing a quote synchronizes confirmed pricing into category `actual` spend while ensuring real vendor negotiations persist across AI refinements and the LLM never invents fake contact details.
+5. **DAG Cycle & Dangling Dependency Sanitization**: Added a 3-color DFS cycle detector in `src/lib/mergeEngine.ts` to automatically detect and break circular dependencies (`Task A -> Task B -> Task A`) and prune unresolved prerequisite IDs before plan ingestion.
+
+### Case Study: Verbatim Bit 2.5 Hardening Prompt
+The following verbatim prompt was executed during Bit 2.5 as a real-world case study in prompt hardening and regression prevention:
+
+```plaintext
+Bit 2.5 — Hardening only. Do not build Bit 3 features. Follow GEMINI.md.
+
+1. Read GEMINI_MODEL and GEMINI_MODEL_FAST from env with no hardcoded defaults. Use GEMINI_MODEL for generate/refine and GEMINI_MODEL_FAST for What-If and Risk Radar wording. On 429/5xx retry once on the fast model, return which model answered, and never simulate output.
+   - Remove the simulated "Demo Mode" fallback completely from `api/` and the UI (`useWeddingPlan.ts`, `AiCopilotBar.tsx`). If `GEMINI_API_KEY`, `GEMINI_MODEL`, or `GEMINI_MODEL_FAST` is missing or both attempts fail, return a typed error, show it in a clear banner, and leave the plan unchanged.
+   - Note on Gemini 3.x SDK config: In `@google/genai`, do NOT use the deprecated `thinkingBudget` integer (which causes 400 errors on Gemini 3.x). For fast/low-latency calls, use `thinkingConfig: { thinkingLevel: 'LOW' }` (or `ThinkingLevel.LOW`).
+   - Update `schema.test.ts` to assert that fallback retries once on the fast model and records `modelUsed`, that missing env vars throw typed errors, and that fake output is never emitted.
+
+2. Enforce the non-negotiables in calculations.ts and mergeEngine.ts:
+   - Budget math must remain strictly deterministic: in `calculations.ts`, make sure the Largest-Remainder Method (Hamilton-Hare) is tested for rounding-drift-free rupee allocations from integer percentage shares.
+   - Make tombstones robust against ID loss on regeneration: store `{ id: string; matchKey: string; label: string }` where `matchKey` is lowercase, trimmed, whitespace-collapsed, and stripped of punctuation. Reject incoming items that match an active tombstone by either `id` OR `matchKey`.
+   - In `mergeEngine.ts`, sanitize incoming task dependencies: detect and break circular dependencies (e.g., A -> B -> A) via a quick 3-color DFS cycle detector before attaching tasks to the plan.
+   - Test all four in Vitest (`npm run test` must pass 100%).
+
+3. Fix the 2 UI regressions:
+   - In `ItineraryTimeline.tsx`, fix the multi-day function filter tab clicks so switching tabs updates the active function view smoothly without scroll jump or missing ceremonies.
+   - In `VendorComparator.tsx`, wire the "Finalize Quote" action so it updates both the vendor slot status and synchronizes the confirmed cost back into the corresponding category's `actual` spend in the budget table.
+```
 
 ---
 
