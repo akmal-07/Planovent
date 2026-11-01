@@ -60,18 +60,25 @@ export const CategoryRow: React.FC<CategoryRowProps> = ({
       : 0;
 
   const handleEstimatedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value === '' ? 0 : Number(e.target.value);
-    onUpdate({ estimated: Math.max(0, val) });
+    const raw = Number(e.target.value);
+    const val = Number.isNaN(raw) ? 0 : raw;
+    onUpdate({ estimated: Math.max(0, Math.round(val)) });
   };
 
   const handleActualChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value === '' ? undefined : Number(e.target.value);
-    onUpdate({ actual: val !== undefined ? Math.max(0, val) : undefined });
+    if (e.target.value === '') {
+      onUpdate({ actual: undefined });
+      return;
+    }
+    const raw = Number(e.target.value);
+    const val = Number.isNaN(raw) ? 0 : raw;
+    onUpdate({ actual: Math.max(0, Math.round(val)) });
   };
 
   const handlePaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value === '' ? 0 : Number(e.target.value);
-    onUpdate({ paid: Math.max(0, val) });
+    const raw = Number(e.target.value);
+    const val = Number.isNaN(raw) ? 0 : raw;
+    onUpdate({ paid: Math.max(0, Math.round(val)) });
   };
 
   const handlePriorityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hydrateInitialPlan, mergeRefinedPlan } from '../mergeEngine';
-import { computeBudgetSummary } from '../calculations';
+import { computeBudgetSummary, toMatchKey } from '../calculations';
 import type { AiGeneratedPlan } from '../../schemas/geminiSchema';
 
 describe('mergeEngine - Non-Destructive Invariants', () => {
@@ -16,14 +16,14 @@ describe('mergeEngine - Non-Destructive Invariants', () => {
       { name: 'Wedding', date: '2026-11-14' },
     ],
     budgetAllocations: [
-      { key: 'venue', label: 'Venue & Accommodation', estimated: 310000, priorityWeight: 'high', scalingType: 'fixed', rationale: 'Grand resort' },
-      { key: 'catering', label: 'Catering & Beverages', estimated: 270000, priorityWeight: 'high', scalingType: 'per_guest', rationale: 'Gourmet live counters' },
-      { key: 'decor', label: 'Decor & Floral Styling', estimated: 65000, priorityWeight: 'low', scalingType: 'fixed', rationale: 'Traditional marigold' },
-      { key: 'photo_video', label: 'Photography & Cinema', estimated: 85000, priorityWeight: 'high', scalingType: 'fixed', rationale: 'Drone + candid stills' },
-      { key: 'entertainment', label: 'Music & Entertainment', estimated: 45000, priorityWeight: 'medium', scalingType: 'fixed', rationale: 'DJ set' },
-      { key: 'invites', label: 'Invitations & Favors', estimated: 15000, priorityWeight: 'low', scalingType: 'per_guest', rationale: 'Digital invites' },
-      { key: 'transport', label: 'Logistics & Fleet', estimated: 35000, priorityWeight: 'medium', scalingType: 'step', rationale: 'Airport fleet' },
-      { key: 'misc', label: 'Rituals & Contingency', estimated: 25000, priorityWeight: 'medium', scalingType: 'fixed', rationale: 'Emergency cushion' },
+      { key: 'venue', label: 'Venue & Accommodation', sharePercent: 35, priorityWeight: 'high', scalingType: 'fixed', rationale: 'Grand resort' },
+      { key: 'catering', label: 'Catering & Beverages', sharePercent: 30, priorityWeight: 'high', scalingType: 'per_guest', rationale: 'Gourmet live counters' },
+      { key: 'decor', label: 'Decor & Floral Styling', sharePercent: 8, priorityWeight: 'low', scalingType: 'fixed', rationale: 'Traditional marigold' },
+      { key: 'photo_video', label: 'Photography & Cinema', sharePercent: 10, priorityWeight: 'high', scalingType: 'fixed', rationale: 'Drone + candid stills' },
+      { key: 'entertainment', label: 'Music & Entertainment', sharePercent: 6, priorityWeight: 'medium', scalingType: 'fixed', rationale: 'DJ set' },
+      { key: 'invites', label: 'Invitations & Favors', sharePercent: 3, priorityWeight: 'low', scalingType: 'per_guest', rationale: 'Digital invites' },
+      { key: 'transport', label: 'Logistics & Fleet', sharePercent: 5, priorityWeight: 'medium', scalingType: 'step', rationale: 'Airport fleet' },
+      { key: 'misc', label: 'Rituals & Contingency', sharePercent: 3, priorityWeight: 'medium', scalingType: 'fixed', rationale: 'Emergency cushion' },
     ],
     tasks: [
       { id: 'task-1', title: 'Book Banquet Venue', deadline: '2026-08-01', priority: 'high', assignee: 'Rohan', eventFunction: 'Wedding' },
@@ -54,7 +54,7 @@ describe('mergeEngine - Non-Destructive Invariants', () => {
     expect(plan.budget[0].source).toBe('ai');
     expect(plan.budget[0].isLocked).toBe(false);
     expect(plan.budget[0].paid).toBe(0);
-    expect(plan.deletedIds).toEqual([]);
+    expect(plan.tombstones).toEqual([]);
   });
 
   it('Invariant 1: Locked budget categories ignore AI budget changes during refinement', () => {
@@ -65,10 +65,10 @@ describe('mergeEngine - Non-Destructive Invariants', () => {
       b.key === 'venue' ? { ...b, estimated: 400000, isLocked: true, source: 'user' } : b
     );
 
-    // AI suggests reducing venue to 250000
+    // AI suggests changing venue sharePercent
     const aiRefinement = createMockAiData({
       budgetAllocations: createMockAiData().budgetAllocations.map((a) =>
-        a.key === 'venue' ? { ...a, estimated: 250000 } : a
+        a.key === 'venue' ? { ...a, sharePercent: 10 } : a
       ),
     });
 
@@ -130,23 +130,34 @@ describe('mergeEngine - Non-Destructive Invariants', () => {
     expect(foundUserTask?.isLocked).toBe(true);
   });
 
-  it('Invariant 4: Deleted tasks (deletedIds) are NEVER resurrected by AI refinement', () => {
+  it('Invariant 4: Tombstoned tasks cannot be resurrected by AI even with a brand new ID', () => {
     const initialPlan = hydrateInitialPlan(createMockAiData());
 
     // User deleted 'Order Sangeet Fireworks'
-    initialPlan.deletedIds.push('task-3');
-    initialPlan.deletedIds.push('order sangeet fireworks');
+    const deletedTitle = 'Order Sangeet Fireworks';
+    initialPlan.tombstones.push({
+      id: 'task-3',
+      matchKey: toMatchKey(deletedTitle),
+      label: deletedTitle,
+    });
     initialPlan.tasks = initialPlan.tasks.filter((t) => t.id !== 'task-3');
 
-    // AI refinement suggests re-adding fireworks
+    // AI refinement returns the exact same task title under a brand new hallucinated ID!
     const aiRefinement = createMockAiData({
       tasks: [
-        { id: 'task-3', title: 'Order Sangeet Fireworks', deadline: '2026-10-15', priority: 'medium', assignee: 'DJ', eventFunction: 'Sangeet' },
+        {
+          id: 'task-brand-new-uuid-999',
+          title: 'Order Sangeet Fireworks',
+          deadline: '2026-10-15',
+          priority: 'medium',
+          assignee: 'DJ',
+          eventFunction: 'Sangeet',
+        },
       ],
     });
 
     const merged = mergeRefinedPlan(initialPlan, aiRefinement);
-    const fireworksTask = merged.tasks.find((t) => t.title.toLowerCase().includes('fireworks'));
+    const fireworksTask = merged.tasks.find((t) => toMatchKey(t.title) === toMatchKey(deletedTitle));
 
     expect(fireworksTask).toBeUndefined();
   });
@@ -227,5 +238,102 @@ describe('mergeEngine - Non-Destructive Invariants', () => {
     expect(summary.totalPlannedOrActual).toBeGreaterThan(0);
     expect(summary.remainingBudget).toBe(merged.totalBudget - summary.totalPlannedOrActual);
     expect(summary.isOverBudget).toBe(summary.remainingBudget < 0);
+  });
+
+  it('DAG sanitization: strips dangling and self-referencing dependsOnTaskId', () => {
+    const initialPlan = hydrateInitialPlan(createMockAiData());
+    const aiRefinement = createMockAiData({
+      tasks: [
+        {
+          id: 'task-valid-1',
+          title: 'Valid Task 1',
+          deadline: '2026-10-01',
+          priority: 'medium',
+          assignee: 'Alice',
+          eventFunction: 'General',
+        },
+        {
+          id: 'task-dangling',
+          title: 'Task with Dangling Dependency',
+          deadline: '2026-10-02',
+          priority: 'medium',
+          assignee: 'Bob',
+          eventFunction: 'General',
+          dependsOnTaskId: 'ghost-task-that-does-not-exist',
+        },
+        {
+          id: 'task-self-ref',
+          title: 'Task Self Referencing',
+          deadline: '2026-10-03',
+          priority: 'medium',
+          assignee: 'Charlie',
+          eventFunction: 'General',
+          dependsOnTaskId: 'task-self-ref',
+        },
+      ],
+    });
+
+    const merged = mergeRefinedPlan(initialPlan, aiRefinement);
+    const dangling = merged.tasks.find((t) => t.id === 'task-dangling');
+    const selfRef = merged.tasks.find((t) => t.id === 'task-self-ref');
+
+    expect(dangling?.dependsOnTaskId).toBeUndefined();
+    expect(selfRef?.dependsOnTaskId).toBeUndefined();
+  });
+
+  it('DAG sanitization: detects and breaks dependency cycles (A <-> B and A -> B -> C -> A)', () => {
+    const initialPlan = hydrateInitialPlan(createMockAiData());
+
+    // 1. Mutual 2-node cycle: A <-> B
+    const aiMutualCycle = createMockAiData({
+      tasks: [
+        {
+          id: 'task-A',
+          title: 'Task A',
+          deadline: '2026-10-01',
+          priority: 'high',
+          assignee: 'A',
+          eventFunction: 'General',
+          dependsOnTaskId: 'task-B',
+        },
+        {
+          id: 'task-B',
+          title: 'Task B',
+          deadline: '2026-10-02',
+          priority: 'high',
+          assignee: 'B',
+          eventFunction: 'General',
+          dependsOnTaskId: 'task-A',
+        },
+      ],
+    });
+
+    const mergedMutual = mergeRefinedPlan(initialPlan, aiMutualCycle);
+    const taskA = mergedMutual.tasks.find((t) => t.id === 'task-A');
+    const taskB = mergedMutual.tasks.find((t) => t.id === 'task-B');
+
+    // Cycle must be broken: both cannot depend on each other
+    const hasCycle = taskA?.dependsOnTaskId === 'task-B' && taskB?.dependsOnTaskId === 'task-A';
+    expect(hasCycle).toBe(false);
+
+    // 2. 3-node cycle: X -> Y -> Z -> X
+    const ai3NodeCycle = createMockAiData({
+      tasks: [
+        { id: 'task-X', title: 'Task X', deadline: '2026-10-01', priority: 'low', assignee: 'X', eventFunction: 'General', dependsOnTaskId: 'task-Y' },
+        { id: 'task-Y', title: 'Task Y', deadline: '2026-10-02', priority: 'low', assignee: 'Y', eventFunction: 'General', dependsOnTaskId: 'task-Z' },
+        { id: 'task-Z', title: 'Task Z', deadline: '2026-10-03', priority: 'low', assignee: 'Z', eventFunction: 'General', dependsOnTaskId: 'task-X' },
+      ],
+    });
+
+    const merged3Node = mergeRefinedPlan(initialPlan, ai3NodeCycle);
+    const taskX = merged3Node.tasks.find((t) => t.id === 'task-X');
+    const taskY = merged3Node.tasks.find((t) => t.id === 'task-Y');
+    const taskZ = merged3Node.tasks.find((t) => t.id === 'task-Z');
+
+    const cyclePersists =
+      taskX?.dependsOnTaskId === 'task-Y' &&
+      taskY?.dependsOnTaskId === 'task-Z' &&
+      taskZ?.dependsOnTaskId === 'task-X';
+    expect(cyclePersists).toBe(false);
   });
 });

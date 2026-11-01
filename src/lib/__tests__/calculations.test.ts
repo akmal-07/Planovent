@@ -7,6 +7,8 @@ import {
   isTaskBlocked,
   getEffectiveSpend,
   calculateDaysRemaining,
+  toMatchKey,
+  allocateBudgetBySharePercent,
 } from '../calculations';
 import type { BudgetCategory, TaskItem, WeddingPlan } from '../../types/plan';
 
@@ -63,7 +65,7 @@ describe('computeBudgetSummary()', () => {
       tasks: [],
       vendors: [],
       ideas: [],
-      deletedIds: [],
+      tombstones: [],
       updatedAt: new Date().toISOString(),
     };
   };
@@ -186,5 +188,104 @@ describe('calculateDaysRemaining() & getEffectiveSpend()', () => {
   it('resolves getEffectiveSpend', () => {
     expect(getEffectiveSpend({ estimated: 100000, actual: 120000 } as BudgetCategory)).toBe(120000);
     expect(getEffectiveSpend({ estimated: 100000, actual: undefined } as BudgetCategory)).toBe(100000);
+  });
+});
+
+describe('toMatchKey()', () => {
+  it('normalizes string: lowercases, strips punctuation, collapses whitespace, and trims', () => {
+    expect(toMatchKey('  Catering & Food Service!  ')).toBe('catering food service');
+    expect(toMatchKey('Mandap Decor (Royal-Style)')).toBe('mandap decor royalstyle');
+    expect(toMatchKey('PHOTOGRAPHY / CINEMA - 4K')).toBe('photography cinema 4k');
+    expect(toMatchKey('DJ & Dhol Players   2026')).toBe('dj dhol players 2026');
+  });
+});
+
+describe('allocateBudgetBySharePercent() with Largest-Remainder Rounding', () => {
+  it('distributes remaining budget pool exactly with zero lost rupee in normal distribution', () => {
+    const totalBudget = 800000;
+    const categories = [
+      { key: 'venue' as const, isLocked: true, lockedSpend: 280000, sharePercent: 35 },
+      { key: 'catering' as const, isLocked: false, lockedSpend: 0, sharePercent: 30 },
+      { key: 'decor' as const, isLocked: false, lockedSpend: 0, sharePercent: 12 },
+      { key: 'photo_video' as const, isLocked: false, lockedSpend: 0, sharePercent: 10 },
+      { key: 'entertainment' as const, isLocked: false, lockedSpend: 0, sharePercent: 5 },
+      { key: 'invites' as const, isLocked: false, lockedSpend: 0, sharePercent: 3 },
+      { key: 'transport' as const, isLocked: false, lockedSpend: 0, sharePercent: 3 },
+      { key: 'misc' as const, isLocked: false, lockedSpend: 0, sharePercent: 2 },
+    ];
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+
+    // Locked category preserves exact spend
+    expect(allocation.venue).toBe(280000);
+
+    // Sum of unlocked allocations must equal remainingPool: 800,000 - 280,000 = 520,000
+    const unlockedSum =
+      allocation.catering +
+      allocation.decor +
+      allocation.photo_video +
+      allocation.entertainment +
+      allocation.invites +
+      allocation.transport +
+      allocation.misc;
+
+    expect(unlockedSum).toBe(520000);
+
+    // Total sum across all categories must equal totalBudget exactly
+    const totalSum = Object.values(allocation).reduce((sum, v) => sum + v, 0);
+    expect(totalSum).toBe(800000);
+
+    // All allocated amounts must be whole integers
+    for (const val of Object.values(allocation)) {
+      expect(Number.isInteger(val)).toBe(true);
+    }
+  });
+
+  it('preserves all locked spend and sets remaining pool to 0 when all categories are locked', () => {
+    const totalBudget = 800000;
+    const categories = [
+      { key: 'venue' as const, isLocked: true, lockedSpend: 300000, sharePercent: 35 },
+      { key: 'catering' as const, isLocked: true, lockedSpend: 300000, sharePercent: 35 },
+      { key: 'decor' as const, isLocked: true, lockedSpend: 200000, sharePercent: 30 },
+    ];
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+    expect(allocation.venue).toBe(300000);
+    expect(allocation.catering).toBe(300000);
+    expect(allocation.decor).toBe(200000);
+
+    const totalSum = Object.values(allocation).reduce((sum, v) => sum + v, 0);
+    expect(totalSum).toBe(800000);
+  });
+
+  it('handles locked spend exceeding totalBudget safely without allocating negative values', () => {
+    const totalBudget = 500000;
+    const categories = [
+      { key: 'venue' as const, isLocked: true, lockedSpend: 400000, sharePercent: 50 },
+      { key: 'catering' as const, isLocked: true, lockedSpend: 250000, sharePercent: 30 }, // 400k + 250k = 650k > 500k
+      { key: 'decor' as const, isLocked: false, lockedSpend: 0, sharePercent: 20 },
+    ];
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+    expect(allocation.venue).toBe(400000);
+    expect(allocation.catering).toBe(250000);
+    expect(allocation.decor).toBe(0); // Unlocked gets 0 because remainingPool is 0
+  });
+
+  it('accurately resolves odd remainder distributions (e.g. 1 rupee remainder) with largest-remainder rounding', () => {
+    // 3 unlocked categories each with 33.33% share of 100 rupees
+    const totalBudget = 100;
+    const categories = [
+      { key: 'venue' as const, isLocked: false, lockedSpend: 0, sharePercent: 33 },
+      { key: 'catering' as const, isLocked: false, lockedSpend: 0, sharePercent: 33 },
+      { key: 'decor' as const, isLocked: false, lockedSpend: 0, sharePercent: 33 },
+    ];
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+    const sum = allocation.venue + allocation.catering + allocation.decor;
+    expect(sum).toBe(100);
+    // At least one category receives 34 while others receive 33
+    const values = [allocation.venue, allocation.catering, allocation.decor].sort();
+    expect(values).toEqual([33, 33, 34]);
   });
 });

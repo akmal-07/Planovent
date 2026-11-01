@@ -3,8 +3,8 @@
  * 
  * STRICT ARCHITECTURAL BOUNDARY:
  * Pure TypeScript only. Zero React, zero DOM, zero localStorage.
- * Deterministic financial math adhering to the 3-Number Budget Formula
- * and DAG task dependency evaluation.
+ * Deterministic financial math adhering to the 3-Number Budget Formula,
+ * DAG task dependency evaluation, and Largest-Remainder budget allocation.
  */
 
 import type {
@@ -167,4 +167,110 @@ export function calculateDaysRemaining(targetDateISO: string, referenceDateISO?:
 
   const diffMs = utcTarget - utcRef;
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Normalizes text for robust match-key comparison:
+ * Lowercase, trimmed, punctuation stripped, whitespace collapsed.
+ */
+export function toMatchKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export interface CategoryAllocationInput {
+  key: BudgetCategoryKey;
+  isLocked: boolean;
+  lockedSpend: number;
+  sharePercent: number; // integer 0-100
+}
+
+/**
+ * Distributes remaining budget pool across unlocked categories proportionally using
+ * the Largest-Remainder (Hamilton–Hare) method so integer rupee sums match remainingPool exactly.
+ */
+export function allocateBudgetBySharePercent(
+  totalBudget: number,
+  categories: CategoryAllocationInput[]
+): Record<BudgetCategoryKey, number> {
+  const result = {} as Record<BudgetCategoryKey, number>;
+  const roundedTotalBudget = Math.max(0, Math.round(Number.isFinite(totalBudget) ? totalBudget : 0));
+
+  let lockedTotal = 0;
+  const unlockedCategories: CategoryAllocationInput[] = [];
+
+  for (const cat of categories) {
+    if (cat.isLocked) {
+      const lockedVal = Math.max(0, Math.round(Number.isFinite(cat.lockedSpend) ? cat.lockedSpend : 0));
+      result[cat.key] = lockedVal;
+      lockedTotal += lockedVal;
+    } else {
+      unlockedCategories.push(cat);
+    }
+  }
+
+  const remainingPool = Math.max(0, roundedTotalBudget - lockedTotal);
+
+  if (unlockedCategories.length === 0) {
+    return result;
+  }
+
+  if (remainingPool === 0) {
+    for (const cat of unlockedCategories) {
+      result[cat.key] = 0;
+    }
+    return result;
+  }
+
+  const totalUnlockedShares = unlockedCategories.reduce(
+    (sum, c) => sum + Math.max(0, c.sharePercent),
+    0
+  );
+
+  interface UnlockedCalc {
+    key: BudgetCategoryKey;
+    floor: number;
+    remainder: number;
+    index: number;
+  }
+
+  const calculations: UnlockedCalc[] = unlockedCategories.map((cat, idx) => {
+    const share = totalUnlockedShares > 0
+      ? Math.max(0, cat.sharePercent) / totalUnlockedShares
+      : 1 / unlockedCategories.length;
+    const exact = share * remainingPool;
+    const floor = Math.floor(exact);
+    const remainder = exact - floor;
+    return {
+      key: cat.key,
+      floor,
+      remainder,
+      index: idx,
+    };
+  });
+
+  const sumFloors = calculations.reduce((sum, c) => sum + c.floor, 0);
+  let remainderRupees = remainingPool - sumFloors;
+
+  // Sort descending by fractional remainder; use stable index as tie-breaker
+  calculations.sort((a, b) => {
+    if (b.remainder !== a.remainder) {
+      return b.remainder - a.remainder;
+    }
+    return a.index - b.index;
+  });
+
+  // Allocate 1 rupee to each highest remainder until remainderRupees === 0
+  for (let i = 0; i < calculations.length; i++) {
+    const extra = remainderRupees > 0 ? 1 : 0;
+    if (extra > 0) {
+      remainderRupees--;
+    }
+    result[calculations[i].key] = calculations[i].floor + extra;
+  }
+
+  return result;
 }

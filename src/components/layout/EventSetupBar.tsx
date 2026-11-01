@@ -189,7 +189,10 @@ export const EventSetupBar: React.FC<EventSetupBarProps> = ({
                 min="1"
                 step="1"
                 value={formData.guestCount}
-                onChange={(e) => setFormData({ ...formData, guestCount: Number(e.target.value) })}
+                onChange={(e) => {
+                  const raw = Number(e.target.value);
+                  setFormData({ ...formData, guestCount: Number.isNaN(raw) ? 1 : Math.max(1, Math.round(raw)) });
+                }}
                 className="glass-input w-full px-3.5 py-2.5 rounded-xl text-sm text-stone-100 font-mono"
                 required
               />
@@ -213,7 +216,10 @@ export const EventSetupBar: React.FC<EventSetupBarProps> = ({
               min="10000"
               step="5000"
               value={formData.totalBudget}
-              onChange={(e) => setFormData({ ...formData, totalBudget: Number(e.target.value) })}
+              onChange={(e) => {
+                const raw = Number(e.target.value);
+                setFormData({ ...formData, totalBudget: Number.isNaN(raw) ? 0 : Math.max(0, Math.round(raw)) });
+              }}
               className="glass-input w-full px-3.5 py-2.5 rounded-xl text-sm font-mono text-stone-100"
               required
             />

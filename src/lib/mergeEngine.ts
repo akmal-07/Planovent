@@ -5,11 +5,13 @@
  * Pure TypeScript only. Zero React imports, zero browser DOM.
  * 
  * CORE MERGE INVARIANTS:
- * 1. Locked budget categories ignore AI changes during refinement.
- * 2. actual and paid amounts survive refinement untouched.
- * 3. Locked tasks and source: 'user' tasks survive refinement untouched.
- * 4. Deleted tasks/vendor slots (deletedIds) are never resurrected by AI refinement.
- * 5. User-entered VendorQuote[] inside VendorSlot survive AI refinement untouched.
+ * 1. Largest-Remainder budget allocation via sharePercent (exact integer rupees, sum equals totalBudget).
+ * 2. Locked budget categories ignore AI changes during refinement.
+ * 3. actual and paid amounts survive refinement untouched.
+ * 4. Locked tasks and source: 'user' tasks survive refinement untouched.
+ * 5. Structured tombstones (id & matchKey) strictly prevent deleted items from resurrecting.
+ * 6. User-entered VendorQuote[] inside VendorSlot survive AI refinement untouched.
+ * 7. Task dependency DAG is sanitized (dangling dependencies dropped, cycles detected & broken).
  */
 
 import type {
@@ -17,21 +19,93 @@ import type {
   BudgetCategory,
   TaskItem,
   VendorSlot,
+  Tombstone,
 } from '../types/plan';
 import type { AiGeneratedPlan } from '../schemas/geminiSchema';
-import { BUDGET_CATEGORY_KEYS } from './calculations';
+import {
+  BUDGET_CATEGORY_KEYS,
+  allocateBudgetBySharePercent,
+  toMatchKey,
+  type CategoryAllocationInput,
+} from './calculations';
 
 /**
- * Normalizes text strings for duplicate/tombstone matching (lowercase, trimmed, collapsed spaces)
+ * Normalizes text strings for duplicate/tombstone matching (lowercase, trimmed, punctuation stripped)
  */
 export function normalizeKey(str: string): string {
-  return str.trim().toLowerCase().replace(/\s+/g, ' ');
+  return toMatchKey(str);
+}
+
+/**
+ * Sanitizes task dependencies:
+ * 1. Drops any dependsOnTaskId that self-references or does not exist in the task set.
+ * 2. Detects and breaks circular dependency cycles (A -> B -> A, etc.) by clearing the cycle-closing edge.
+ */
+export function sanitizeTaskDependencies(tasks: TaskItem[]): TaskItem[] {
+  const taskMap = new Map<string, TaskItem>();
+  for (const t of tasks) {
+    taskMap.set(t.id, { ...t });
+  }
+
+  // 1. Remove dangling or self-referential dependencies
+  for (const t of taskMap.values()) {
+    if (t.dependsOnTaskId) {
+      if (t.dependsOnTaskId === t.id || !taskMap.has(t.dependsOnTaskId)) {
+        t.dependsOnTaskId = undefined;
+      }
+    }
+  }
+
+  // 2. Cycle detection using 3-color DFS
+  // 0 = unvisited, 1 = visiting (in active call stack), 2 = visited
+  const state = new Map<string, 0 | 1 | 2>();
+  for (const id of taskMap.keys()) {
+    state.set(id, 0);
+  }
+
+  function dfs(taskId: string): void {
+    state.set(taskId, 1);
+    const task = taskMap.get(taskId);
+    if (task && task.dependsOnTaskId) {
+      const prereqId = task.dependsOnTaskId;
+      const prereqState = state.get(prereqId);
+
+      if (prereqState === 1) {
+        // Circular cycle detected! Break cycle by clearing dependency on this edge
+        task.dependsOnTaskId = undefined;
+      } else if (prereqState === 0) {
+        dfs(prereqId);
+      }
+    }
+    state.set(taskId, 2);
+  }
+
+  for (const id of taskMap.keys()) {
+    if (state.get(id) === 0) {
+      dfs(id);
+    }
+  }
+
+  return tasks.map((t) => taskMap.get(t.id) || t);
 }
 
 /**
  * Converts a freshly generated AI payload into a complete initial WeddingPlan
+ * using Largest-Remainder rupee allocation.
  */
 export function hydrateInitialPlan(aiData: AiGeneratedPlan): WeddingPlan {
+  const allocationInputs: CategoryAllocationInput[] = BUDGET_CATEGORY_KEYS.map((key) => {
+    const alloc = aiData.budgetAllocations.find((a) => a.key === key);
+    return {
+      key,
+      isLocked: false,
+      lockedSpend: 0,
+      sharePercent: alloc?.sharePercent ?? 12,
+    };
+  });
+
+  const allocatedBudget = allocateBudgetBySharePercent(aiData.totalBudget, allocationInputs);
+
   const budget: BudgetCategory[] = BUDGET_CATEGORY_KEYS.map((key) => {
     const alloc = aiData.budgetAllocations.find((a) => a.key === key);
     return {
@@ -39,7 +113,7 @@ export function hydrateInitialPlan(aiData: AiGeneratedPlan): WeddingPlan {
       key,
       label: alloc?.label || key,
       priorityWeight: alloc?.priorityWeight || 'medium',
-      estimated: alloc ? Math.round(alloc.estimated) : 50000,
+      estimated: allocatedBudget[key] ?? 0,
       actual: undefined,
       paid: 0,
       scalingType: alloc?.scalingType || 'fixed',
@@ -50,7 +124,7 @@ export function hydrateInitialPlan(aiData: AiGeneratedPlan): WeddingPlan {
     };
   });
 
-  const tasks: TaskItem[] = aiData.tasks.map((t, idx) => ({
+  const rawTasks: TaskItem[] = aiData.tasks.map((t, idx) => ({
     id: t.id || `task-ai-${idx + 1}`,
     title: t.title,
     deadline: t.deadline,
@@ -63,6 +137,8 @@ export function hydrateInitialPlan(aiData: AiGeneratedPlan): WeddingPlan {
     source: 'ai',
     isLocked: false,
   }));
+
+  const tasks = sanitizeTaskDependencies(rawTasks);
 
   const vendors: VendorSlot[] = aiData.vendors.map((v, idx) => ({
     id: v.id || `vslot-ai-${idx + 1}`,
@@ -97,22 +173,54 @@ export function hydrateInitialPlan(aiData: AiGeneratedPlan): WeddingPlan {
       description: idea.description,
       category: idea.category,
     })),
-    deletedIds: [],
+    tombstones: [],
     updatedAt: new Date().toISOString(),
   };
 }
 
 /**
  * Non-destructive merge of an incoming AI refinement into an existing WeddingPlan.
- * Preserves user locks, quotes, paid/actual amounts, and deleted items.
+ * Preserves user locks, quotes, paid/actual amounts, and structured tombstones.
  */
 export function mergeRefinedPlan(
   currentPlan: WeddingPlan,
   aiData: AiGeneratedPlan
 ): WeddingPlan {
-  const deletedSet = new Set(currentPlan.deletedIds.map(normalizeKey));
+  // Support both structured tombstones and legacy deletedIds safely
+  const tombstones: Tombstone[] = currentPlan.tombstones || [];
+  const tombstoneMatchKeys = new Set(tombstones.map((t) => t.matchKey));
+  const tombstoneIds = new Set(tombstones.map((t) => t.id));
 
-  // 1. Budget Merge Invariant
+  // Legacy deletedIds fallback
+  if ((currentPlan as any).deletedIds) {
+    for (const legacyId of (currentPlan as any).deletedIds) {
+      tombstoneIds.add(legacyId);
+      tombstoneMatchKeys.add(normalizeKey(legacyId));
+    }
+  }
+
+  // 1. Budget Merge Invariant using Largest-Remainder allocation
+  const allocationInputs: CategoryAllocationInput[] = BUDGET_CATEGORY_KEYS.map((key) => {
+    const existingCat = currentPlan.budget.find((b) => b.key === key);
+    const aiAlloc = aiData.budgetAllocations.find((a) => a.key === key);
+
+    const isLocked = existingCat?.isLocked ?? false;
+    const lockedSpend = isLocked && existingCat ? existingCat.estimated : 0;
+    const sharePercent = aiAlloc?.sharePercent ?? 12;
+
+    return {
+      key,
+      isLocked,
+      lockedSpend,
+      sharePercent,
+    };
+  });
+
+  const allocatedBudget = allocateBudgetBySharePercent(
+    currentPlan.totalBudget,
+    allocationInputs
+  );
+
   const mergedBudget: BudgetCategory[] = BUDGET_CATEGORY_KEYS.map((key) => {
     const existingCat = currentPlan.budget.find((b) => b.key === key);
     const aiAlloc = aiData.budgetAllocations.find((a) => a.key === key);
@@ -123,7 +231,7 @@ export function mergeRefinedPlan(
         key,
         label: aiAlloc?.label || key,
         priorityWeight: aiAlloc?.priorityWeight || 'medium',
-        estimated: aiAlloc ? Math.round(aiAlloc.estimated) : 0,
+        estimated: allocatedBudget[key] ?? 0,
         actual: undefined,
         paid: 0,
         scalingType: aiAlloc?.scalingType || 'fixed',
@@ -132,20 +240,19 @@ export function mergeRefinedPlan(
       };
     }
 
-    // Invariant: If locked, NEVER alter estimated spend or priority!
+    // Invariant: If locked, preserve existing category completely
     if (existingCat.isLocked) {
       return {
         ...existingCat,
       };
     }
 
-    // Unlocked category: Update estimated from AI
+    // Unlocked category: Apply largest-remainder allocated budget
     return {
       ...existingCat,
-      estimated: aiAlloc ? Math.round(aiAlloc.estimated) : existingCat.estimated,
+      estimated: allocatedBudget[key] ?? existingCat.estimated,
       priorityWeight: aiAlloc?.priorityWeight || existingCat.priorityWeight,
       scalingType: aiAlloc?.scalingType || existingCat.scalingType,
-      // Invariant: Always keep actual and paid untouched
       actual: existingCat.actual,
       paid: existingCat.paid,
       source: existingCat.source,
@@ -154,7 +261,6 @@ export function mergeRefinedPlan(
   });
 
   // 2. Task Merge Invariant
-  // Keep 100% of user-created or locked tasks
   const preservedTasks: TaskItem[] = [];
   const existingUnlockedTasksMap = new Map<string, TaskItem>();
 
@@ -162,31 +268,29 @@ export function mergeRefinedPlan(
     if (t.isLocked || t.source === 'user') {
       preservedTasks.push(t);
     } else {
-      existingUnlockedTasksMap.set(normalizeKey(t.id), t);
+      existingUnlockedTasksMap.set(t.id, t);
       existingUnlockedTasksMap.set(normalizeKey(t.title), t);
     }
   }
 
   const mergedAiTasks: TaskItem[] = [];
   for (const incoming of aiData.tasks) {
-    const normId = normalizeKey(incoming.id);
-    const normTitle = normalizeKey(incoming.title);
+    const normKey = normalizeKey(incoming.title);
 
-    // Invariant: Reject if item was deleted by user
-    if (deletedSet.has(normId) || deletedSet.has(normTitle)) {
+    // Invariant: Strictly reject any tombstoned task by ID or matchKey
+    if (tombstoneIds.has(incoming.id) || tombstoneMatchKeys.has(normKey)) {
       continue;
     }
 
-    // Check if task already preserved (locked/user)
+    // Check if task already preserved (user/locked)
     const alreadyPreserved = preservedTasks.some(
-      (p) => normalizeKey(p.id) === normId || normalizeKey(p.title) === normTitle
+      (p) => p.id === incoming.id || normalizeKey(p.title) === normKey
     );
     if (alreadyPreserved) {
       continue;
     }
 
-    // Match with existing unlocked AI task
-    const matched = existingUnlockedTasksMap.get(normId) || existingUnlockedTasksMap.get(normTitle);
+    const matched = existingUnlockedTasksMap.get(incoming.id) || existingUnlockedTasksMap.get(normKey);
 
     if (matched) {
       mergedAiTasks.push({
@@ -198,12 +302,11 @@ export function mergeRefinedPlan(
         assignee: incoming.assignee || matched.assignee,
         eventFunction: incoming.eventFunction,
         dependsOnTaskId: incoming.dependsOnTaskId || matched.dependsOnTaskId,
-        done: matched.done, // Invariant: Keep completion status
+        done: matched.done, // Retain completion status
         source: 'ai',
         isLocked: false,
       });
     } else {
-      // New AI Task
       mergedAiTasks.push({
         id: incoming.id || `task-ai-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         title: incoming.title,
@@ -220,8 +323,8 @@ export function mergeRefinedPlan(
     }
   }
 
-  // Combine preserved user/locked tasks + merged AI tasks
-  const mergedTasks = [...preservedTasks, ...mergedAiTasks];
+  // Combine and sanitize dependencies (break cycles, drop dangling)
+  const mergedTasks = sanitizeTaskDependencies([...preservedTasks, ...mergedAiTasks]);
 
   // 3. Vendor Slot Merge Invariant
   const preservedVendors: VendorSlot[] = [];
@@ -231,29 +334,28 @@ export function mergeRefinedPlan(
     if (v.isLocked || v.source === 'user') {
       preservedVendors.push(v);
     } else {
-      existingUnlockedVendorsMap.set(normalizeKey(v.id), v);
+      existingUnlockedVendorsMap.set(v.id, v);
       existingUnlockedVendorsMap.set(normalizeKey(v.type), v);
     }
   }
 
   const mergedAiVendors: VendorSlot[] = [];
   for (const incoming of aiData.vendors) {
-    const normId = normalizeKey(incoming.id);
-    const normType = normalizeKey(incoming.type);
+    const normKey = normalizeKey(incoming.type);
 
-    // Invariant: Reject deleted slots
-    if (deletedSet.has(normId) || deletedSet.has(normType)) {
+    // Invariant: Strictly reject tombstoned vendor slots
+    if (tombstoneIds.has(incoming.id) || tombstoneMatchKeys.has(normKey)) {
       continue;
     }
 
     const alreadyPreserved = preservedVendors.some(
-      (p) => normalizeKey(p.id) === normId || normalizeKey(p.type) === normType
+      (p) => p.id === incoming.id || normalizeKey(p.type) === normKey
     );
     if (alreadyPreserved) {
       continue;
     }
 
-    const matched = existingUnlockedVendorsMap.get(normId) || existingUnlockedVendorsMap.get(normType);
+    const matched = existingUnlockedVendorsMap.get(incoming.id) || existingUnlockedVendorsMap.get(normKey);
 
     if (matched) {
       mergedAiVendors.push({
@@ -261,7 +363,7 @@ export function mergeRefinedPlan(
         categoryKey: incoming.categoryKey,
         type: incoming.type,
         estimatedQuote: Math.round(incoming.estimatedQuote),
-        // Invariant: Quotes entered by user and status are NEVER wiped!
+        // Preserve quotes and status
         quotes: matched.quotes,
         status: matched.status,
         source: 'ai',
@@ -283,7 +385,7 @@ export function mergeRefinedPlan(
 
   const mergedVendors = [...preservedVendors, ...mergedAiVendors];
 
-  // 4. Combined Accessibility Needs
+  // 4. Accessibility Needs Union
   const combinedAccessibility = Array.from(
     new Set([...currentPlan.accessibilityNeeds, ...aiData.accessibilityNeeds])
   );
@@ -294,7 +396,7 @@ export function mergeRefinedPlan(
     city: aiData.city || currentPlan.city,
     eventStyle: aiData.eventStyle || currentPlan.eventStyle,
     guestCount: Math.round(aiData.guestCount || currentPlan.guestCount),
-    totalBudget: Math.round(aiData.totalBudget || currentPlan.totalBudget),
+    totalBudget: Math.round(currentPlan.totalBudget), // Preserve current user totalBudget
     accessibilityNeeds: combinedAccessibility,
     functions: aiData.functions.length > 0
       ? aiData.functions.map((fn) => ({ name: fn.name, date: fn.date, time: fn.time }))
@@ -308,7 +410,7 @@ export function mergeRefinedPlan(
       description: idea.description,
       category: idea.category,
     })),
-    deletedIds: currentPlan.deletedIds,
+    tombstones,
     updatedAt: new Date().toISOString(),
   };
 }

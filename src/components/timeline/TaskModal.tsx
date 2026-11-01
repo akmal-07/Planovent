@@ -53,7 +53,7 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setFormData({
         title: '',
         deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        timeSlot: '10:00 AM',
+        timeSlot: '10:00',
         priority: 'medium',
         assignee: '',
         done: false,
@@ -185,8 +185,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                 type="text"
                 value={formData.timeSlot}
                 onChange={(e) => setFormData({ ...formData, timeSlot: e.target.value })}
-                placeholder="e.g. 10:30 AM"
-                className="glass-input w-full px-3 py-2 text-xs text-stone-100 rounded-xl"
+                placeholder="e.g. 09:30 or 14:00"
+                className="glass-input w-full px-3 py-2 text-xs font-mono text-stone-100 rounded-xl"
               />
             </div>
           </div>

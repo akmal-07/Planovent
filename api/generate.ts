@@ -10,31 +10,16 @@ import {
   geminiPlanResponseSchema,
 } from '../src/schemas/geminiSchema.ts';
 
-// In-memory rate limiter: max 15 requests per minute per IP
-const ipRateMap = new Map<string, { count: number; resetTime: number }>();
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = ipRateMap.get(ip);
-  if (!entry || now > entry.resetTime) {
-    ipRateMap.set(ip, { count: 1, resetTime: now + 60 * 1000 });
-    return true;
-  }
-  if (entry.count >= 15) {
-    return false;
-  }
-  entry.count++;
-  return true;
-}
+// Quota and rate limiting are enforced at the Gemini API key / provider boundary.
+export const maxDuration = 30;
+export const config = { maxDuration: 30 };
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
-  }
-
-  const clientIp = (req.headers && (req.headers['x-forwarded-for'] || req.socket?.remoteAddress)) || 'unknown';
-  if (!checkRateLimit(String(clientIp))) {
-    return res.status(429).json({ error: 'Too many requests. Please wait a minute before generating again.' });
+    return res.status(405).json({
+      error: 'Method Not Allowed. Use POST.',
+      code: 'METHOD_NOT_ALLOWED',
+    });
   }
 
   // Validate Input with Zod
@@ -42,6 +27,7 @@ export default async function handler(req: any, res: any) {
   if (!validation.success) {
     return res.status(400).json({
       error: 'Invalid request payload',
+      code: 'INVALID_REQUEST_PAYLOAD',
       details: validation.error.format(),
     });
   }
@@ -52,13 +38,18 @@ export default async function handler(req: any, res: any) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'your_actual_ai_studio_api_key_here') {
     return res.status(503).json({
-      error: 'GEMINI_API_KEY not configured.',
-      message: 'Please set your valid Gemini API key in .env or deployment environment variables.',
-      demoAvailable: true,
+      error: 'GEMINI_API_KEY is not configured in server environment.',
+      code: 'MISSING_API_KEY',
     });
   }
 
   const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  if (!modelName) {
+    return res.status(500).json({
+      error: 'GEMINI_MODEL is not configured.',
+      code: 'MISSING_MODEL_NAME',
+    });
+  }
 
   try {
     const ai = new GoogleGenAI({ apiKey });
@@ -73,9 +64,9 @@ Context hints:
 Task:
 Generate a complete, culturally authentic Indian wedding plan adhering strictly to the response schema:
 1. Exactly the 8 budget categories: venue, catering, decor, photo_video, entertainment, invites, transport, misc.
-2. The sum of estimated amounts across all 8 categories MUST equal approximately ₹${totalBudget || 800000}.
+2. The sharePercent across all 8 categories MUST sum to approximately 100%.
 3. Assign priorityWeight ('high' for non-negotiables like Catering & Photography, 'low' for flexible areas like Decor/Invites).
-4. ZERO HALLUCINATED VENDORS: Provide archetypes only (e.g. 'Candid Wedding Photographer', 'Royal Mandap Stylist').
+4. ZERO HALLUCINATED VENDORS: Provide archetypes only (e.g. 'Candid Wedding Photographer', 'Royal Mandap Stylist'). Do NOT include business names, contact details, or extra fields.
 5. Multi-day functions (Haldi, Mehndi, Sangeet, Wedding, Reception) with realistic milestone dates and task dependencies (dependsOnTaskId).
 6. 3-5 personalized celebration ideas.
 7. Concise 2-3 sentence aiSummary explaining trade-offs.
@@ -98,7 +89,10 @@ Generate a complete, culturally authentic Indian wedding plan adhering strictly 
 
     const responseText = response.text;
     if (!responseText) {
-      throw new Error('Empty response received from Gemini API');
+      return res.status(502).json({
+        error: 'Empty response received from Gemini API',
+        code: 'EMPTY_AI_RESPONSE',
+      });
     }
 
     const parsedJson = JSON.parse(responseText);
@@ -106,8 +100,9 @@ Generate a complete, culturally authentic Indian wedding plan adhering strictly 
 
     if (!planValidation.success) {
       console.error('Schema validation errors on AI output:', planValidation.error.format());
-      return res.status(422).json({
+      return res.status(502).json({
         error: 'AI generated response failed validation schema',
+        code: 'SCHEMA_VALIDATION_ERROR',
         details: planValidation.error.format(),
       });
     }
@@ -118,9 +113,9 @@ Generate a complete, culturally authentic Indian wedding plan adhering strictly 
     });
   } catch (error: any) {
     console.error('Gemini API generateContent error:', error);
-    return res.status(500).json({
-      error: 'Failed to generate plan via Gemini API',
-      message: error?.message || 'Upstream API failure',
+    return res.status(502).json({
+      error: error?.message || 'Upstream Gemini API call failed',
+      code: 'GEMINI_UPSTREAM_ERROR',
     });
   }
 }

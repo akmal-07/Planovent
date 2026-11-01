@@ -3,10 +3,9 @@
  * 
  * Strict contract for Zod runtime validation and @google/genai responseSchema.
  * Enforces:
- * - Exactly the 8 core budget categories.
- * - Integer INR currency amounts.
+ * - Exactly the 8 core budget categories with integer sharePercent (0-100).
  * - Priority-aware weights ('high' | 'medium' | 'low').
- * - Zero hallucinated real vendor details.
+ * - Strict schema typing (.strict()) preventing hallucinated vendor contact fields.
  * - Input length caps and prompt sanitization.
  */
 
@@ -37,16 +36,16 @@ export const PRIORITY_LEVELS = ['high', 'medium', 'low'] as const;
 export const SCALING_TYPES = ['fixed', 'per_guest', 'step'] as const;
 
 /**
- * 1. Zod Schema for Gemini Plan Generation & Refinement
+ * 1. Zod Schema for Gemini Plan Generation & Refinement (.strict() prevents unexpected hallucinated keys)
  */
 export const AiBudgetAllocationSchema = z.object({
   key: z.enum(BUDGET_KEYS),
   label: z.string().min(1),
-  estimated: z.number().int().nonnegative(),
+  sharePercent: z.number().int().min(0).max(100),
   priorityWeight: z.enum(PRIORITY_LEVELS),
   scalingType: z.enum(SCALING_TYPES),
   rationale: z.string().min(1),
-});
+}).strict();
 
 export const AiTaskSchema = z.object({
   id: z.string().min(1),
@@ -57,27 +56,27 @@ export const AiTaskSchema = z.object({
   assignee: z.string().min(1),
   eventFunction: z.enum(EVENT_FUNCTIONS),
   dependsOnTaskId: z.string().optional(),
-});
+}).strict();
 
 export const AiVendorSlotSchema = z.object({
   id: z.string().min(1),
   categoryKey: z.enum(BUDGET_KEYS),
-  type: z.string().min(1), // Archetype only, never fake company names
+  type: z.string().min(1), // Archetype only, never fake company names or phone numbers
   estimatedQuote: z.number().int().nonnegative(),
-});
+}).strict();
 
 export const AiIdeaSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   description: z.string().min(1),
   category: z.string().min(1),
-});
+}).strict();
 
 export const AiFunctionScheduleSchema = z.object({
   name: z.enum(EVENT_FUNCTIONS),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
   time: z.string().optional(),
-});
+}).strict();
 
 export const AiGeneratedPlanSchema = z.object({
   title: z.string().min(1),
@@ -92,7 +91,7 @@ export const AiGeneratedPlanSchema = z.object({
   vendors: z.array(AiVendorSlotSchema),
   ideas: z.array(AiIdeaSchema).min(2).max(6),
   aiSummary: z.string().min(10), // 2-3 sentence trade-off narrative
-});
+}).strict();
 
 export type AiGeneratedPlan = z.infer<typeof AiGeneratedPlanSchema>;
 
@@ -136,7 +135,7 @@ export const geminiPlanResponseSchema = {
             enum: [...BUDGET_KEYS],
           },
           label: { type: Type.STRING },
-          estimated: { type: Type.INTEGER },
+          sharePercent: { type: Type.INTEGER },
           priorityWeight: {
             type: Type.STRING,
             enum: [...PRIORITY_LEVELS],
@@ -147,7 +146,7 @@ export const geminiPlanResponseSchema = {
           },
           rationale: { type: Type.STRING },
         },
-        required: ['key', 'label', 'estimated', 'priorityWeight', 'scalingType', 'rationale'],
+        required: ['key', 'label', 'sharePercent', 'priorityWeight', 'scalingType', 'rationale'],
       },
     },
     tasks: {
@@ -236,7 +235,7 @@ export const GenerateRequestSchema = z.object({
   city: z.string().max(100).optional(),
   guestCount: z.number().int().positive().max(10000).optional(),
   totalBudget: z.number().int().positive().max(500000000).optional(),
-});
+}).strict();
 
 export const RefineRequestSchema = z.object({
   prompt: z.string().min(3).max(600).transform(sanitizePrompt),
@@ -263,6 +262,11 @@ export const RefineRequestSchema = z.object({
     })),
     tasks: z.array(z.any()),
     vendors: z.array(z.any()),
-    deletedIds: z.array(z.string()),
+    tombstones: z.array(z.object({
+      id: z.string(),
+      matchKey: z.string(),
+      label: z.string(),
+    })).optional(),
+    deletedIds: z.array(z.string()).optional(),
   }),
-});
+}).strict();

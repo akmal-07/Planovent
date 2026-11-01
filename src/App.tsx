@@ -37,7 +37,6 @@ export const App: React.FC = () => {
     convertIdeaToTask,
     generateAiPlan,
     refineAiPlan,
-    simulateLocalRefinement,
     undoLastAiChange,
     dismissAiError,
   } = useWeddingPlan();
@@ -76,7 +75,6 @@ export const App: React.FC = () => {
           hasSnapshot={hasSnapshot}
           onGenerate={(prompt) => generateAiPlan(prompt)}
           onRefine={(prompt) => refineAiPlan(prompt)}
-          onSimulateRefine={(prompt) => simulateLocalRefinement(prompt)}
           onUndo={undoLastAiChange}
           onDismissError={dismissAiError}
           onConvertIdeaToTask={convertIdeaToTask}

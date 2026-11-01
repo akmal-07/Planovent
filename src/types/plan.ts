@@ -46,12 +46,12 @@ export interface TaskItem {
   id: string;
   title: string;
   deadline: string;             // YYYY-MM-DD
-  timeSlot?: string;            // e.g. "10:00 AM" for Day-Of itinerary
+  timeSlot?: string;            // 24h format "HH:mm" (e.g. "09:30", "18:00")
   priority: PriorityLevel;
   assignee: string;
   done: boolean;
   eventFunction: EventFunctionName;
-  dependsOnTaskId?: string;     // Prerequisite task ID for dependency tracking
+  dependsOnTaskId?: string;     // Prerequisite task ID for DAG dependency tracking
   source: 'user' | 'ai';
   isLocked: boolean;
 }
@@ -81,6 +81,12 @@ export interface EventFunctionSchedule {
   time?: string;
 }
 
+export interface Tombstone {
+  id: string;
+  matchKey: string;             // Normalized key (lowercase, trimmed, punctuation stripped)
+  label: string;                // Original human-readable title or type
+}
+
 export interface WeddingPlan {
   id: string;
   title: string;
@@ -94,7 +100,7 @@ export interface WeddingPlan {
   tasks: TaskItem[];
   vendors: VendorSlot[];
   ideas: { id: string; title: string; description: string; category: string }[];
-  deletedIds: string[];         // Tombstones for AI merges
+  tombstones: Tombstone[];      // Structured tombstones for AI merges
   updatedAt: string;
 }
 

@@ -308,15 +308,20 @@ export const TaskChecklist: React.FC<TaskChecklistProps> = ({
         </div>
       )}
 
-      {/* View 2: Multi-Day Function Schedule (Grouped by Haldi/Mehndi/Sangeet/Wedding/Reception + timeSlot) */}
+      {/* View 2: Multi-Day Function Schedule (Grouped by Function, separating Timed Ceremony Schedule from Untimed Prep) */}
       {viewMode === 'schedule' && (
         <div className="space-y-6">
           {EVENT_FUNCTIONS.map((fn) => {
-            const functionTasks = tasks
-              .filter((t) => t.eventFunction === fn)
+            const functionTasks = tasks.filter((t) => t.eventFunction === fn);
+            if (functionTasks.length === 0) return null;
+
+            const timedTasks = functionTasks
+              .filter((t) => Boolean(t.timeSlot))
               .sort((a, b) => (a.timeSlot || '').localeCompare(b.timeSlot || ''));
 
-            if (functionTasks.length === 0) return null;
+            const untimedTasks = functionTasks
+              .filter((t) => !t.timeSlot)
+              .sort((a, b) => a.deadline.localeCompare(b.deadline));
 
             return (
               <div key={fn} className="glass-panel rounded-2xl border border-stone-800 overflow-hidden shadow-xl">
@@ -330,50 +335,109 @@ export const TaskChecklist: React.FC<TaskChecklistProps> = ({
                   </span>
                 </div>
 
-                <div className="divide-y divide-stone-800/60 p-2">
-                  {functionTasks.map((task) => {
-                    const blocked = isTaskBlocked(task, tasks);
-                    return (
-                      <div
-                        key={task.id}
-                        className={`p-3 sm:px-4 rounded-xl transition-colors flex items-center justify-between gap-3 ${
-                          task.done ? 'opacity-60 bg-stone-950/20' : 'hover:bg-stone-900/40'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Time badge */}
-                          <div className="w-20 px-2 py-1 rounded bg-stone-950 border border-stone-800 text-[11px] font-mono font-semibold text-gold-300 text-center flex-shrink-0">
-                            {task.timeSlot || 'Anytime'}
-                          </div>
-                          <div className="min-w-0">
-                            <span className={`text-sm font-semibold text-stone-200 block truncate ${task.done ? 'line-through text-stone-500' : ''}`}>
-                              {task.title}
-                            </span>
-                            <span className="text-[11px] text-stone-400">
-                              Lead: {task.assignee}
-                            </span>
-                          </div>
-                        </div>
+                {/* Timed Ceremony Schedule Section */}
+                {timedTasks.length > 0 && (
+                  <div>
+                    <div className="px-4 py-2 bg-stone-900/40 text-[11px] font-semibold uppercase tracking-wider text-gold-400 flex items-center gap-1.5 border-b border-stone-800/60">
+                      <Clock className="w-3.5 h-3.5 text-gold-400" aria-hidden="true" />
+                      Timed Ceremony Schedule ({timedTasks.length})
+                    </div>
+                    <div className="divide-y divide-stone-800/60 p-2">
+                      {timedTasks.map((task) => {
+                        const blocked = isTaskBlocked(task, tasks);
+                        return (
+                          <div
+                            key={task.id}
+                            className={`p-3 sm:px-4 rounded-xl transition-colors flex items-center justify-between gap-3 ${
+                              task.done ? 'opacity-60 bg-stone-950/20' : 'hover:bg-stone-900/40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-20 px-2 py-1 rounded bg-stone-950 border border-gold-500/30 text-[11px] font-mono font-semibold text-gold-300 text-center flex-shrink-0">
+                                {task.timeSlot}
+                              </div>
+                              <div className="min-w-0">
+                                <span className={`text-sm font-semibold text-stone-200 block truncate ${task.done ? 'line-through text-stone-500' : ''}`}>
+                                  {task.title}
+                                </span>
+                                <span className="text-[11px] text-stone-400">
+                                  Lead: {task.assignee}
+                                </span>
+                              </div>
+                            </div>
 
-                        {/* Status / Blocked badge */}
-                        <div className="flex items-center gap-2">
-                          {blocked && (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              Blocked
-                            </span>
-                          )}
-                          <input
-                            type="checkbox"
-                            checked={task.done}
-                            onChange={() => onToggleDone(task.id)}
-                            aria-label={`Mark "${task.title}" as ${task.done ? 'pending' : 'completed'}`}
-                            className="w-4 h-4 rounded border-stone-700 bg-stone-900 text-brand-500 cursor-pointer"
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                            <div className="flex items-center gap-2">
+                              {blocked && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  Blocked
+                                </span>
+                              )}
+                              <input
+                                type="checkbox"
+                                checked={task.done}
+                                onChange={() => onToggleDone(task.id)}
+                                aria-label={`Mark "${task.title}" as ${task.done ? 'pending' : 'completed'}`}
+                                className="w-4 h-4 rounded border-stone-700 bg-stone-900 text-brand-500 cursor-pointer"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* General Untimed Prep & Logistics Section */}
+                {untimedTasks.length > 0 && (
+                  <div>
+                    <div className="px-4 py-2 bg-stone-900/40 text-[11px] font-semibold uppercase tracking-wider text-stone-400 flex items-center gap-1.5 border-t border-b border-stone-800/60">
+                      <CalendarCheck2 className="w-3.5 h-3.5 text-stone-400" aria-hidden="true" />
+                      General Prep & Logistics ({untimedTasks.length})
+                    </div>
+                    <div className="divide-y divide-stone-800/60 p-2">
+                      {untimedTasks.map((task) => {
+                        const blocked = isTaskBlocked(task, tasks);
+                        return (
+                          <div
+                            key={task.id}
+                            className={`p-3 sm:px-4 rounded-xl transition-colors flex items-center justify-between gap-3 ${
+                              task.done ? 'opacity-60 bg-stone-950/20' : 'hover:bg-stone-900/40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-20 px-2 py-1 rounded bg-stone-950/80 border border-stone-800 text-[11px] font-mono font-medium text-stone-400 text-center flex-shrink-0">
+                                Untimed
+                              </div>
+                              <div className="min-w-0">
+                                <span className={`text-sm font-semibold text-stone-200 block truncate ${task.done ? 'line-through text-stone-500' : ''}`}>
+                                  {task.title}
+                                </span>
+                                <span className="text-[11px] text-stone-400">
+                                  Lead: {task.assignee} • Due: {task.deadline}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {blocked && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  Blocked
+                                </span>
+                              )}
+                              <input
+                                type="checkbox"
+                                checked={task.done}
+                                onChange={() => onToggleDone(task.id)}
+                                aria-label={`Mark "${task.title}" as ${task.done ? 'pending' : 'completed'}`}
+                                className="w-4 h-4 rounded border-stone-700 bg-stone-900 text-brand-500 cursor-pointer"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

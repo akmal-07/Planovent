@@ -10,31 +10,16 @@ import {
   geminiPlanResponseSchema,
 } from '../src/schemas/geminiSchema.ts';
 
-// In-memory rate limiter: max 15 requests per minute per IP
-const ipRateMap = new Map<string, { count: number; resetTime: number }>();
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = ipRateMap.get(ip);
-  if (!entry || now > entry.resetTime) {
-    ipRateMap.set(ip, { count: 1, resetTime: now + 60 * 1000 });
-    return true;
-  }
-  if (entry.count >= 15) {
-    return false;
-  }
-  entry.count++;
-  return true;
-}
+// Quota and rate limiting are enforced at the Gemini API key / provider boundary.
+export const maxDuration = 30;
+export const config = { maxDuration: 30 };
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
-  }
-
-  const clientIp = (req.headers && (req.headers['x-forwarded-for'] || req.socket?.remoteAddress)) || 'unknown';
-  if (!checkRateLimit(String(clientIp))) {
-    return res.status(429).json({ error: 'Too many requests. Please wait a minute before refining again.' });
+    return res.status(405).json({
+      error: 'Method Not Allowed. Use POST.',
+      code: 'METHOD_NOT_ALLOWED',
+    });
   }
 
   // Validate Input with Zod
@@ -42,6 +27,7 @@ export default async function handler(req: any, res: any) {
   if (!validation.success) {
     return res.status(400).json({
       error: 'Invalid refinement payload',
+      code: 'INVALID_REQUEST_PAYLOAD',
       details: validation.error.format(),
     });
   }
@@ -52,13 +38,18 @@ export default async function handler(req: any, res: any) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'your_actual_ai_studio_api_key_here') {
     return res.status(503).json({
-      error: 'GEMINI_API_KEY not configured.',
-      message: 'Please set your valid Gemini API key in .env or deployment environment variables.',
-      demoAvailable: true,
+      error: 'GEMINI_API_KEY is not configured in server environment.',
+      code: 'MISSING_API_KEY',
     });
   }
 
   const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  if (!modelName) {
+    return res.status(500).json({
+      error: 'GEMINI_MODEL is not configured.',
+      code: 'MISSING_MODEL_NAME',
+    });
+  }
 
   try {
     const ai = new GoogleGenAI({ apiKey });
@@ -76,7 +67,9 @@ export default async function handler(req: any, res: any) {
       .filter((t: any) => t.isLocked || t.source === 'user')
       .map((t: any) => t.title);
 
-    const deletedItems = currentPlan.deletedIds;
+    const deletedItems = Array.isArray(currentPlan.tombstones)
+      ? currentPlan.tombstones.map((t: any) => t.label || t.id)
+      : (currentPlan.deletedIds || []);
 
     const refinementContext = `
 User Refinement Request: "${prompt}"
@@ -96,14 +89,14 @@ ${unlockedCategories.join('\n')}
 LOCKED / USER TASKS (Preserve these):
 ${lockedTasks.slice(0, 10).join(', ')}
 
-DELETED ITEMS (Tombstones - DO NOT resurrect or re-add these items):
-${deletedItems.join(', ') || 'None'}
+DELETED ITEMS — DO NOT PROPOSE THESE OR SYNONYMS:
+${deletedItems.length > 0 ? deletedItems.join(', ') : 'None'}
 
 Refinement Instructions:
 1. Respect all locked categories strictly.
 2. If cutting budget, cut 'low' priority categories first. Protect 'high' priority categories (e.g. food/photo).
 3. If adjusting menus or dietary needs, update catering, task checklist, and personalized ideas.
-4. Output must match the exact response schema.
+4. Output must match the exact response schema. Categories must specify sharePercent (0-100).
 5. In aiSummary, write a 2-3 sentence explanation explaining the trade-offs made and how user priorities were respected.
 `;
 
@@ -124,7 +117,10 @@ Refinement Instructions:
 
     const responseText = response.text;
     if (!responseText) {
-      throw new Error('Empty response received from Gemini API');
+      return res.status(502).json({
+        error: 'Empty response received from Gemini API',
+        code: 'EMPTY_AI_RESPONSE',
+      });
     }
 
     const parsedJson = JSON.parse(responseText);
@@ -132,8 +128,9 @@ Refinement Instructions:
 
     if (!planValidation.success) {
       console.error('Schema validation errors on refined plan:', planValidation.error.format());
-      return res.status(422).json({
+      return res.status(502).json({
         error: 'Refined plan failed schema validation',
+        code: 'SCHEMA_VALIDATION_ERROR',
         details: planValidation.error.format(),
       });
     }
@@ -144,9 +141,9 @@ Refinement Instructions:
     });
   } catch (error: any) {
     console.error('Gemini API refine error:', error);
-    return res.status(500).json({
-      error: 'Failed to refine plan via Gemini API',
-      message: error?.message || 'Upstream API failure',
+    return res.status(502).json({
+      error: error?.message || 'Upstream Gemini API call failed',
+      code: 'GEMINI_UPSTREAM_ERROR',
     });
   }
 }

@@ -39,9 +39,11 @@ export const Header: React.FC<HeaderProps> = ({
                 <h1 className="text-xl sm:text-2xl font-serif font-bold text-stone-100 tracking-tight truncate">
                   {plan.title}
                 </h1>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gold-400/10 text-gold-400 border border-gold-400/20">
-                  Challenge 5 Benchmark
-                </span>
+                {plan.id === 'benchmark-hyderabad-8L' && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gold-400/10 text-gold-400 border border-gold-400/20">
+                    Viewing Example Preset
+                  </span>
+                )}
               </div>
               <p className="text-xs text-stone-400 flex items-center gap-2 mt-0.5">
                 <span className="flex items-center gap-1">

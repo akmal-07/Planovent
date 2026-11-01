@@ -20,7 +20,6 @@ interface AiCopilotBarProps {
   hasSnapshot: boolean;
   onGenerate: (prompt: string) => Promise<boolean>;
   onRefine: (prompt: string) => Promise<boolean>;
-  onSimulateRefine: (prompt: string) => void;
   onUndo: () => void;
   onDismissError: () => void;
   onConvertIdeaToTask: (ideaId: string) => void;
@@ -41,7 +40,6 @@ export const AiCopilotBar: React.FC<AiCopilotBarProps> = ({
   hasSnapshot,
   onGenerate,
   onRefine,
-  onSimulateRefine,
   onUndo,
   onDismissError,
   onConvertIdeaToTask,
@@ -216,34 +214,25 @@ export const AiCopilotBar: React.FC<AiCopilotBarProps> = ({
           </div>
         </form>
 
-        {/* Error Banner with Offline Demo Mode Fallback */}
+        {/* Error Banner without Simulated Fallback */}
         {aiError && (
           <div className="mt-4 p-4 rounded-xl bg-rose-950/40 border border-rose-500/40 text-xs text-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
             <div className="flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <div>
-                <strong className="font-semibold block">AI Execution Notice:</strong>
+                <strong className="font-semibold block">Gemini API Error:</strong>
                 <span>{aiError}</span>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-end sm:self-auto">
-              <button
-                type="button"
-                onClick={() => onSimulateRefine(prompt || 'Simulate priority-aware 15% budget cut')}
-                className="px-3 py-1.5 rounded-lg bg-gold-500/20 hover:bg-gold-500/30 text-gold-300 border border-gold-500/40 font-semibold text-xs transition-colors whitespace-nowrap"
-              >
-                Simulate Non-Destructive Merge (Demo Mode)
-              </button>
-              <button
-                type="button"
-                onClick={onDismissError}
-                aria-label="Dismiss error banner"
-                className="px-2 py-1.5 text-stone-400 hover:text-stone-200"
-              >
-                Dismiss
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onDismissError}
+              aria-label="Dismiss error banner"
+              className="px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 font-semibold text-xs transition-colors whitespace-nowrap self-end sm:self-auto"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 

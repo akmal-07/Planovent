@@ -3,7 +3,8 @@
  * 
  * REACTIVE PRESENTATION BOUNDARY:
  * State management with localStorage persistence, automatic lock triggers on edit,
- * deletedIds tombstone tracking, derived calculations, and Gemini AI orchestration with 1-click snapshot rollback.
+ * structured tombstones tracking, derived calculations, and Gemini AI orchestration
+ * with 25s timeout and 1-click snapshot rollback.
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -18,6 +19,7 @@ import type {
 import {
   computeBudgetSummary,
   updateWithAutoLock,
+  toMatchKey,
 } from '../lib/calculations';
 import { BENCHMARK_MOCK_PLAN } from '../lib/mockPlan';
 import { hydrateInitialPlan, mergeRefinedPlan } from '../lib/mergeEngine';
@@ -59,7 +61,7 @@ export function createBlankPlan(): WeddingPlan {
     tasks: [],
     vendors: [],
     ideas: [],
-    deletedIds: [],
+    tombstones: [],
     updatedAt: new Date().toISOString(),
   };
 }
@@ -69,7 +71,18 @@ export function useWeddingPlan() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        // Safely migrate legacy plans with deletedIds -> structured tombstones
+        if (!Array.isArray(parsed.tombstones)) {
+          const legacyDeleted: string[] = Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [];
+          parsed.tombstones = legacyDeleted.map((id) => ({
+            id,
+            matchKey: toMatchKey(id),
+            label: id,
+          }));
+        }
+        delete parsed.deletedIds;
+        return parsed;
       }
     } catch (e) {
       console.warn('Failed to parse saved plan from localStorage', e);
@@ -105,6 +118,16 @@ export function useWeddingPlan() {
     return computeBudgetSummary(plan);
   }, [plan]);
 
+  // Clear snapshot on any manual user edit
+  const clearSnapshot = useCallback(() => {
+    setLastSnapshot(null);
+    try {
+      sessionStorage.removeItem(SNAPSHOT_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Snapshot manager
   const createSnapshot = useCallback(() => {
     setLastSnapshot(plan);
@@ -131,46 +154,58 @@ export function useWeddingPlan() {
 
   // Load Benchmark Example
   const loadBenchmarkPlan = useCallback(() => {
-    createSnapshot();
+    clearSnapshot();
     setPlan({
       ...BENCHMARK_MOCK_PLAN,
       updatedAt: new Date().toISOString(),
     });
     setAiSummary('Loaded Challenge 5 benchmark scenario: ₹8,00,000 / 200 guests over 4 months.');
-  }, [createSnapshot]);
+  }, [clearSnapshot]);
 
   // Reset to Blank Plan
   const resetPlan = useCallback(() => {
-    createSnapshot();
+    clearSnapshot();
     setPlan(createBlankPlan());
     setAiSummary(null);
-  }, [createSnapshot]);
+  }, [clearSnapshot]);
 
   // Update Event Top Details
   const updateEventDetails = useCallback(
     (details: Partial<Pick<WeddingPlan, 'title' | 'city' | 'eventStyle' | 'guestCount' | 'totalBudget' | 'accessibilityNeeds' | 'functions'>>) => {
+      clearSnapshot();
       setPlan((prev) => ({
         ...prev,
         ...details,
-        totalBudget: details.totalBudget !== undefined ? Math.round(details.totalBudget) : prev.totalBudget,
-        guestCount: details.guestCount !== undefined ? Math.max(1, Math.round(details.guestCount)) : prev.guestCount,
+        totalBudget: details.totalBudget !== undefined
+          ? Math.max(0, Math.round(Number.isNaN(details.totalBudget) ? 0 : details.totalBudget))
+          : prev.totalBudget,
+        guestCount: details.guestCount !== undefined
+          ? Math.max(1, Math.round(Number.isNaN(details.guestCount) ? 1 : details.guestCount))
+          : prev.guestCount,
         updatedAt: new Date().toISOString(),
       }));
     },
-    []
+    [clearSnapshot]
   );
 
   // Update Category (Auto-Lock Invariant)
   const updateCategory = useCallback(
     (categoryId: string, updates: Partial<BudgetCategory>) => {
+      clearSnapshot();
       setPlan((prev) => {
         const updatedBudget = prev.budget.map((item) => {
           if (item.id !== categoryId) return item;
           const patched = updateWithAutoLock(item, {
             ...updates,
-            estimated: updates.estimated !== undefined ? Math.round(updates.estimated) : item.estimated,
-            actual: updates.actual !== undefined && updates.actual !== null ? Math.round(updates.actual) : updates.actual,
-            paid: updates.paid !== undefined ? Math.round(updates.paid) : item.paid,
+            estimated: updates.estimated !== undefined
+              ? Math.max(0, Math.round(Number.isNaN(updates.estimated) ? 0 : updates.estimated))
+              : item.estimated,
+            actual: updates.actual !== undefined && updates.actual !== null
+              ? Math.max(0, Math.round(Number.isNaN(updates.actual) ? 0 : updates.actual))
+              : updates.actual,
+            paid: updates.paid !== undefined
+              ? Math.max(0, Math.round(Number.isNaN(updates.paid) ? 0 : updates.paid))
+              : item.paid,
             source: 'user',
           });
           return patched;
@@ -183,11 +218,12 @@ export function useWeddingPlan() {
         };
       });
     },
-    []
+    [clearSnapshot]
   );
 
   // Toggle Category Lock
   const toggleCategoryLock = useCallback((categoryId: string) => {
+    clearSnapshot();
     setPlan((prev) => ({
       ...prev,
       budget: prev.budget.map((item) =>
@@ -195,10 +231,11 @@ export function useWeddingPlan() {
       ),
       updatedAt: new Date().toISOString(),
     }));
-  }, []);
+  }, [clearSnapshot]);
 
   // Add Task
   const addTask = useCallback((taskData: Omit<TaskItem, 'id' | 'source' | 'isLocked'>) => {
+    clearSnapshot();
     setPlan((prev) => {
       const newTask: TaskItem = {
         ...taskData,
@@ -212,10 +249,11 @@ export function useWeddingPlan() {
         updatedAt: new Date().toISOString(),
       };
     });
-  }, []);
+  }, [clearSnapshot]);
 
   // Update Task (Auto-Lock Invariant)
   const updateTask = useCallback((taskId: string, updates: Partial<TaskItem>) => {
+    clearSnapshot();
     setPlan((prev) => ({
       ...prev,
       tasks: prev.tasks.map((task) =>
@@ -225,10 +263,11 @@ export function useWeddingPlan() {
       ),
       updatedAt: new Date().toISOString(),
     }));
-  }, []);
+  }, [clearSnapshot]);
 
   // Toggle Task Completion
   const toggleTaskDone = useCallback((taskId: string) => {
+    clearSnapshot();
     setPlan((prev) => ({
       ...prev,
       tasks: prev.tasks.map((task) =>
@@ -236,22 +275,32 @@ export function useWeddingPlan() {
       ),
       updatedAt: new Date().toISOString(),
     }));
-  }, []);
+  }, [clearSnapshot]);
 
-  // Delete Task (Tombstone invariant)
+  // Delete Task (Tombstone invariant with structured matchKey)
   const deleteTask = useCallback((taskId: string) => {
-    setPlan((prev) => ({
-      ...prev,
-      tasks: prev.tasks.filter((t) => t.id !== taskId),
-      deletedIds: prev.deletedIds.includes(taskId)
-        ? prev.deletedIds
-        : [...prev.deletedIds, taskId],
-      updatedAt: new Date().toISOString(),
-    }));
-  }, []);
+    clearSnapshot();
+    setPlan((prev) => {
+      const taskToDelete = prev.tasks.find((t) => t.id === taskId);
+      const label = taskToDelete?.title || taskId;
+      const matchKey = toMatchKey(label);
+      const alreadyTombstoned = prev.tombstones.some((t) => t.id === taskId || t.matchKey === matchKey);
+      const updatedTombstones = alreadyTombstoned
+        ? prev.tombstones
+        : [...prev.tombstones, { id: taskId, matchKey, label }];
+
+      return {
+        ...prev,
+        tasks: prev.tasks.filter((t) => t.id !== taskId),
+        tombstones: updatedTombstones,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [clearSnapshot]);
 
   // Toggle Task Lock
   const toggleTaskLock = useCallback((taskId: string) => {
+    clearSnapshot();
     setPlan((prev) => ({
       ...prev,
       tasks: prev.tasks.map((t) =>
@@ -259,11 +308,12 @@ export function useWeddingPlan() {
       ),
       updatedAt: new Date().toISOString(),
     }));
-  }, []);
+  }, [clearSnapshot]);
 
   // Add Vendor Slot
   const addVendorSlot = useCallback(
     (slotData: Omit<VendorSlot, 'id' | 'source' | 'isLocked' | 'quotes'>) => {
+      clearSnapshot();
       setPlan((prev) => {
         const newSlot: VendorSlot = {
           ...slotData,
@@ -279,23 +329,33 @@ export function useWeddingPlan() {
         };
       });
     },
-    []
+    [clearSnapshot]
   );
 
-  // Delete Vendor Slot
+  // Delete Vendor Slot (Tombstone invariant with structured matchKey)
   const deleteVendorSlot = useCallback((slotId: string) => {
-    setPlan((prev) => ({
-      ...prev,
-      vendors: prev.vendors.filter((v) => v.id !== slotId),
-      deletedIds: prev.deletedIds.includes(slotId)
-        ? prev.deletedIds
-        : [...prev.deletedIds, slotId],
-      updatedAt: new Date().toISOString(),
-    }));
-  }, []);
+    clearSnapshot();
+    setPlan((prev) => {
+      const slotToDelete = prev.vendors.find((v) => v.id === slotId);
+      const label = slotToDelete?.type || slotId;
+      const matchKey = toMatchKey(label);
+      const alreadyTombstoned = prev.tombstones.some((t) => t.id === slotId || t.matchKey === matchKey);
+      const updatedTombstones = alreadyTombstoned
+        ? prev.tombstones
+        : [...prev.tombstones, { id: slotId, matchKey, label }];
+
+      return {
+        ...prev,
+        vendors: prev.vendors.filter((v) => v.id !== slotId),
+        tombstones: updatedTombstones,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [clearSnapshot]);
 
   // Toggle Vendor Slot Lock
   const toggleVendorSlotLock = useCallback((slotId: string) => {
+    clearSnapshot();
     setPlan((prev) => ({
       ...prev,
       vendors: prev.vendors.map((v) =>
@@ -303,17 +363,18 @@ export function useWeddingPlan() {
       ),
       updatedAt: new Date().toISOString(),
     }));
-  }, []);
+  }, [clearSnapshot]);
 
   // Add Vendor Quote
   const addVendorQuote = useCallback(
     (slotId: string, quoteData: Omit<VendorQuote, 'id' | 'isFinalized'>) => {
+      clearSnapshot();
       setPlan((prev) => {
         const quoteId = `quote-${Date.now()}`;
         const newQuote: VendorQuote = {
           ...quoteData,
           id: quoteId,
-          quotedPrice: Math.round(quoteData.quotedPrice),
+          quotedPrice: Math.max(0, Math.round(Number.isNaN(quoteData.quotedPrice) ? 0 : quoteData.quotedPrice)),
           isFinalized: false,
         };
 
@@ -330,18 +391,20 @@ export function useWeddingPlan() {
         };
       });
     },
-    []
+    [clearSnapshot]
   );
 
-  // Finalize Quote & Sync Actual Spend
+  // Finalize Quote & Sync Actual Spend Guardrail
   const finalizeVendorQuote = useCallback((slotId: string, quoteId: string) => {
+    clearSnapshot();
     setPlan((prev) => {
-      const slot = prev.vendors.find((s) => s.id === slotId);
-      if (!slot) return prev;
+      const targetSlot = prev.vendors.find((s) => s.id === slotId);
+      if (!targetSlot) return prev;
 
-      const chosen = slot.quotes.find((q) => q.id === quoteId);
-      if (!chosen) return prev;
+      const chosenQuote = targetSlot.quotes.find((q) => q.id === quoteId);
+      if (!chosenQuote) return prev;
 
+      // 1. Mark chosen quote as finalized in target slot
       const updatedVendors = prev.vendors.map((s) => {
         if (s.id !== slotId) return s;
         return updateWithAutoLock(s, {
@@ -354,12 +417,26 @@ export function useWeddingPlan() {
         });
       });
 
+      // 2. Sum finalized quotes across all vendor slots sharing categoryKey
+      const categoryKey = targetSlot.categoryKey;
+      const categoryFinalizedSum = updatedVendors
+        .filter((s) => s.categoryKey === categoryKey)
+        .reduce((sum, s) => {
+          const fin = s.quotes.find((q) => q.isFinalized);
+          return sum + (fin ? fin.quotedPrice : 0);
+        }, 0);
+
+      // 3. Only auto-update category.actual if category is NOT locked
       const updatedBudget = prev.budget.map((cat) => {
-        if (cat.key !== slot.categoryKey) return cat;
-        return updateWithAutoLock(cat, {
-          actual: chosen.quotedPrice,
-          source: 'user',
-        });
+        if (cat.key !== categoryKey) return cat;
+        if (cat.isLocked) {
+          // Category is manually locked: protect user's manual override
+          return cat;
+        }
+        return {
+          ...cat,
+          actual: categoryFinalizedSum > 0 ? categoryFinalizedSum : undefined,
+        };
       });
 
       return {
@@ -369,13 +446,16 @@ export function useWeddingPlan() {
         updatedAt: new Date().toISOString(),
       };
     });
-  }, []);
+  }, [clearSnapshot]);
 
   // Delete Quote
   const deleteVendorQuote = useCallback((slotId: string, quoteId: string) => {
-    setPlan((prev) => ({
-      ...prev,
-      vendors: prev.vendors.map((slot) => {
+    clearSnapshot();
+    setPlan((prev) => {
+      const targetSlot = prev.vendors.find((s) => s.id === slotId);
+      if (!targetSlot) return prev;
+
+      const updatedVendors = prev.vendors.map((slot) => {
         if (slot.id !== slotId) return slot;
         const quotes = slot.quotes.filter((q) => q.id !== quoteId);
         return updateWithAutoLock(slot, {
@@ -383,13 +463,37 @@ export function useWeddingPlan() {
           status: quotes.some((q) => q.isFinalized) ? 'confirmed' : 'pending',
           source: 'user',
         });
-      }),
-      updatedAt: new Date().toISOString(),
-    }));
-  }, []);
+      });
+
+      // Recalculate finalized sum for unlocked categories
+      const categoryKey = targetSlot.categoryKey;
+      const categoryFinalizedSum = updatedVendors
+        .filter((s) => s.categoryKey === categoryKey)
+        .reduce((sum, s) => {
+          const fin = s.quotes.find((q) => q.isFinalized);
+          return sum + (fin ? fin.quotedPrice : 0);
+        }, 0);
+
+      const updatedBudget = prev.budget.map((cat) => {
+        if (cat.key !== categoryKey || cat.isLocked) return cat;
+        return {
+          ...cat,
+          actual: categoryFinalizedSum > 0 ? categoryFinalizedSum : undefined,
+        };
+      });
+
+      return {
+        ...prev,
+        vendors: updatedVendors,
+        budget: updatedBudget,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [clearSnapshot]);
 
   // Convert Idea to Task (Rubric Feature)
   const convertIdeaToTask = useCallback((ideaId: string) => {
+    clearSnapshot();
     setPlan((prev) => {
       const idea = prev.ideas.find((i) => i.id === ideaId);
       if (!idea) return prev;
@@ -412,18 +516,22 @@ export function useWeddingPlan() {
         updatedAt: new Date().toISOString(),
       };
     });
-  }, []);
+  }, [clearSnapshot]);
 
-  // AI Operation 1: Generate New Plan via Serverless /api/generate
+  // AI Operation 1: Generate New Plan via Serverless /api/generate with 25s timeout
   const generateAiPlan = useCallback(
     async (userPrompt: string, context?: { city?: string; guestCount?: number; totalBudget?: number }): Promise<boolean> => {
       setIsAiLoading(true);
       setAiError(null);
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+
       try {
         const res = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             prompt: userPrompt,
             city: context?.city || plan.city,
@@ -435,7 +543,7 @@ export function useWeddingPlan() {
         const data = await res.json();
 
         if (!res.ok) {
-          throw new Error(data.message || data.error || `HTTP ${res.status}`);
+          throw new Error(data.error || data.message || `API error (${res.status})`);
         }
 
         if (data.data) {
@@ -448,25 +556,34 @@ export function useWeddingPlan() {
         return false;
       } catch (err: any) {
         console.error('generateAiPlan error:', err);
-        setAiError(err.message || 'Failed to generate plan via Gemini');
+        if (err.name === 'AbortError') {
+          setAiError('Generation timed out after 25 seconds. Please check your network or try again.');
+        } else {
+          setAiError(err.message || 'Failed to generate plan via Gemini');
+        }
         return false;
       } finally {
+        clearTimeout(timeoutId);
         setIsAiLoading(false);
       }
     },
     [plan, createSnapshot]
   );
 
-  // AI Operation 2: Refine Existing Plan Non-Destructively via /api/refine
+  // AI Operation 2: Refine Existing Plan Non-Destructively via /api/refine with 25s timeout
   const refineAiPlan = useCallback(
     async (userPrompt: string): Promise<boolean> => {
       setIsAiLoading(true);
       setAiError(null);
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+
       try {
         const res = await fetch('/api/refine', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             prompt: userPrompt,
             currentPlan: plan,
@@ -476,7 +593,7 @@ export function useWeddingPlan() {
         const data = await res.json();
 
         if (!res.ok) {
-          throw new Error(data.message || data.error || `HTTP ${res.status}`);
+          throw new Error(data.error || data.message || `API error (${res.status})`);
         }
 
         if (data.data) {
@@ -489,90 +606,19 @@ export function useWeddingPlan() {
         return false;
       } catch (err: any) {
         console.error('refineAiPlan error:', err);
-        setAiError(err.message || 'Failed to refine plan via Gemini');
+        if (err.name === 'AbortError') {
+          setAiError('Refinement timed out after 25 seconds. Please try again.');
+        } else {
+          setAiError(err.message || 'Failed to refine plan via Gemini');
+        }
         return false;
       } finally {
+        clearTimeout(timeoutId);
         setIsAiLoading(false);
       }
     },
     [plan, createSnapshot]
   );
-
-  // Fallback Simulation (Demo Mode when API key not configured)
-  const simulateLocalRefinement = useCallback((userPrompt: string) => {
-    createSnapshot();
-
-    // Priority-aware simulated adjustment:
-    // If user mentions "veg" or "jain", add dietary tag and note
-    const lower = userPrompt.toLowerCase();
-    let updatedAccessibility = [...plan.accessibilityNeeds];
-    if (lower.includes('veg') || lower.includes('jain')) {
-      if (!updatedAccessibility.includes('100% Pure Vegetarian & Jain Counters')) {
-        updatedAccessibility.push('100% Pure Vegetarian & Jain Counters');
-      }
-    }
-
-    // If user mentions cut or 15%, reduce low priority categories by 15% and protect high priority
-    const cutRequested = lower.includes('cut') || lower.includes('15') || lower.includes('reduce');
-    const factor = cutRequested ? 0.85 : 1.0;
-
-    const mockAiPlan: AiGeneratedPlan = {
-      title: plan.title,
-      city: plan.city,
-      eventStyle: plan.eventStyle,
-      guestCount: plan.guestCount,
-      totalBudget: Math.round(plan.totalBudget * (cutRequested ? 0.90 : 1.0)),
-      accessibilityNeeds: updatedAccessibility,
-      functions: plan.functions,
-      budgetAllocations: plan.budget.map((c) => ({
-        key: c.key,
-        label: c.label,
-        // Shield high priority from heavy cut; apply full cut to low priority
-        estimated: Math.round(c.estimated * (c.priorityWeight === 'low' ? factor : c.priorityWeight === 'medium' ? 0.95 : 1.0)),
-        priorityWeight: c.priorityWeight,
-        scalingType: c.scalingType,
-        rationale: c.priorityWeight === 'high' ? 'Shielded from budget reduction' : 'Reduced to meet target constraint',
-      })),
-      tasks: [
-        ...plan.tasks.map((t) => ({
-          id: t.id,
-          title: t.title,
-          deadline: t.deadline,
-          timeSlot: t.timeSlot,
-          priority: t.priority,
-          assignee: t.assignee,
-          eventFunction: t.eventFunction,
-          dependsOnTaskId: t.dependsOnTaskId,
-        })),
-        {
-          id: `task-sim-${Date.now()}`,
-          title: lower.includes('veg') ? 'Finalize Pure Veg & Jain Live Chaat Vendors' : 'Review Revised Category Allocations',
-          deadline: plan.functions[0]?.date || '2026-11-01',
-          priority: 'high',
-          assignee: 'Coordinator',
-          eventFunction: 'Wedding',
-        },
-      ],
-      vendors: plan.vendors.map((v) => ({
-        id: v.id,
-        categoryKey: v.categoryKey,
-        type: v.type,
-        estimatedQuote: Math.round(v.estimatedQuote * (cutRequested ? 0.95 : 1.0)),
-      })),
-      ideas: [
-        { id: 'sim-idea-1', title: 'Local Artisan Floral Canopies', description: 'Procure marigold and jasmine directly from local mandis to save 20%.', category: 'decor' },
-        { id: 'sim-idea-2', title: 'Interactive Live Jalebi Counter', description: 'Fresh saffron jalebi with rabri live station during Sangeet.', category: 'catering' },
-      ],
-      aiSummary: cutRequested
-        ? 'Simulated trade-off: Reduced flexible low-priority items (Decor & Invites) by 15% while protecting High-Priority Food & Photography allocations.'
-        : `Applied non-destructive refinement for: "${userPrompt}". Preserved all locked items and user quotes intact.`,
-    };
-
-    const merged = mergeRefinedPlan(plan, mockAiPlan);
-    setPlan(merged);
-    setAiError(null);
-    setAiSummary(mockAiPlan.aiSummary);
-  }, [plan, createSnapshot]);
 
   return {
     plan,
@@ -602,7 +648,6 @@ export function useWeddingPlan() {
     // AI Operations
     generateAiPlan,
     refineAiPlan,
-    simulateLocalRefinement,
     undoLastAiChange,
     dismissAiError: () => setAiError(null),
     setPlanDirectly: setPlan,

@@ -30,9 +30,10 @@ export const QuoteComparisonDrawer: React.FC<QuoteComparisonDrawerProps> = ({
     e.preventDefault();
     if (!vendorName.trim() || quotedPrice === '') return;
 
+    const price = Number(quotedPrice);
     onAddQuote(slot.id, {
       vendorName: vendorName.trim(),
-      quotedPrice: Number(quotedPrice),
+      quotedPrice: Number.isNaN(price) ? 0 : Math.max(0, Math.round(price)),
       notes: notes.trim() || undefined,
     });
 
@@ -212,7 +213,14 @@ export const QuoteComparisonDrawer: React.FC<QuoteComparisonDrawerProps> = ({
                   step="1000"
                   min="0"
                   value={quotedPrice}
-                  onChange={(e) => setQuotedPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  onChange={(e) => {
+                    if (e.target.value === '') {
+                      setQuotedPrice('');
+                      return;
+                    }
+                    const num = Number(e.target.value);
+                    setQuotedPrice(Number.isNaN(num) ? 0 : num);
+                  }}
                   placeholder="e.g. 75000"
                   className="glass-input w-full px-3 py-2 text-xs font-mono text-stone-100 rounded-lg"
                   required
