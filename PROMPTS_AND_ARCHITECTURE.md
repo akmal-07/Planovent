@@ -58,7 +58,7 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 | **Category Scaling Heuristics** | `per_guest` (linear guest ratio), `step` (discrete linear step-interval heuristic: `Math.trunc(delta / stepSize)`), and `fixed` (invariant to guests). |
 | **Operational Risk Radar** | 6 deterministic diagnostic rules evaluating over-budget conditions, category overruns (>15%), overdue milestones, blocked DAG tasks, unassigned leads, and pending vendors with 1-click action fixes. Opens with balanced 75–85 ("Needs Attention") health score. |
 | **Family Collaboration** | 1-click WhatsApp plain-text brief copying, dedicated unclipped multi-page executive printable layout (`@media print`), and schema-validated JSON plan backups (<200KB) for cross-device sharing. |
-| **Code Quality & Testing** | **71 Vitest unit tests** passing with 100% pass rate. Pure TypeScript engine in `src/lib/`. Built with semantic HTML landmarks, keyboard navigation, and explicit ARIA labels (`aria-label`, `aria-pressed`, `role="dialog"`). |
+| **Code Quality & Testing** | **73 Vitest unit tests** passing with 100% pass rate. Pure TypeScript engine in `src/lib/`. Built with semantic HTML landmarks, keyboard navigation, and explicit ARIA labels (`aria-label`, `aria-pressed`, `role="dialog"`). |
 
 ---
 
@@ -217,16 +217,16 @@ export const geminiPlanResponseSchema = {
 
 ---
 
-## 6. Verification Summary (71 Vitest Tests Passing)
+## 6. Verification Summary (73 Vitest Tests Passing)
 
 ```
 Test Files  6 passed (6)
-     Tests  71 passed (71)
-  Duration  1.64s
+     Tests  73 passed (73)
+  Duration  1.94s
 
 ✓ src/lib/__tests__/calculations.test.ts (25 tests)
-✓ src/lib/__tests__/schema.test.ts (11 tests)
-✓ src/lib/__tests__/mergeEngine.test.ts (10 tests)
+✓ src/lib/__tests__/schema.test.ts (12 tests)
+✓ src/lib/__tests__/mergeEngine.test.ts (11 tests)
 ✓ src/lib/__tests__/simulator.test.ts (9 tests)
 ✓ src/lib/__tests__/summaryFormatter.test.ts (9 tests)
 ✓ src/lib/__tests__/riskEngine.test.ts (7 tests)

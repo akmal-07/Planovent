@@ -7,7 +7,7 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import {
   RefineRequestSchema,
-  AiGeneratedPlanSchema,
+  AiRefinedPlanSchema,
   geminiPlanResponseSchema,
   withTimeout,
 } from './_shared.ts';
@@ -160,7 +160,7 @@ Refinement Instructions:
     }
 
     const parsedJson = JSON.parse(responseText);
-    const planValidation = AiGeneratedPlanSchema.safeParse(parsedJson);
+    const planValidation = AiRefinedPlanSchema.safeParse(parsedJson);
 
     if (!planValidation.success) {
       console.error('Schema validation errors on refined plan:', planValidation.error.format());

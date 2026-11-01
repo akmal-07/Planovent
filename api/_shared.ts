@@ -105,11 +105,13 @@ export const AiGeneratedPlanSchema = z.object({
   budgetAllocations: z.array(AiBudgetAllocationSchema).length(8, 'Must include all 8 categories'),
   tasks: z.array(AiTaskSchema),
   vendors: z.array(AiVendorSlotSchema),
-  ideas: z.array(AiIdeaSchema).min(2).max(6),
+  ideas: z.array(AiIdeaSchema).min(0).max(6).default([]),
   aiSummary: z.string().min(10), // 2-3 sentence trade-off narrative
 }).strict();
 
+export const AiRefinedPlanSchema = AiGeneratedPlanSchema;
 export type AiGeneratedPlan = z.infer<typeof AiGeneratedPlanSchema>;
+export type AiRefinedPlan = z.infer<typeof AiRefinedPlanSchema>;
 
 export const geminiPlanResponseSchema = {
   type: Type.OBJECT,

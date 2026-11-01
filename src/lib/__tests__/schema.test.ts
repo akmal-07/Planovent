@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   AiGeneratedPlanSchema,
+  AiRefinedPlanSchema,
   GenerateRequestSchema,
   RefineRequestSchema,
 } from '../../schemas/geminiSchema';
@@ -114,6 +115,24 @@ describe('Zod Boundary Tests (AiGeneratedPlanSchema & Schemas)', () => {
   it('passes validation with a 100% compliant, culturally authentic AI payload', () => {
     const result = AiGeneratedPlanSchema.safeParse(validAiPayload);
     expect(result.success).toBe(true);
+  });
+
+  it('accepts empty ideas array (min 0) in AiGeneratedPlanSchema and AiRefinedPlanSchema', () => {
+    const payloadWithEmptyIdeas = {
+      ...validAiPayload,
+      ideas: [],
+    };
+    const genResult = AiGeneratedPlanSchema.safeParse(payloadWithEmptyIdeas);
+    expect(genResult.success).toBe(true);
+    if (genResult.success) {
+      expect(genResult.data.ideas).toEqual([]);
+    }
+
+    const refineResult = AiRefinedPlanSchema.safeParse(payloadWithEmptyIdeas);
+    expect(refineResult.success).toBe(true);
+    if (refineResult.success) {
+      expect(refineResult.data.ideas).toEqual([]);
+    }
   });
 
   it('rejects floating-point sharePercent (must be integer percentage)', () => {

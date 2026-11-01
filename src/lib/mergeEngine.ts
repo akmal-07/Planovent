@@ -167,7 +167,7 @@ export function hydrateInitialPlan(aiData: AiGeneratedPlan): WeddingPlan {
     budget,
     tasks,
     vendors,
-    ideas: aiData.ideas.map((idea, idx) => ({
+    ideas: (aiData.ideas || []).map((idea, idx) => ({
       id: idea.id || `idea-${idx + 1}`,
       title: idea.title,
       description: idea.description,
@@ -404,12 +404,14 @@ export function mergeRefinedPlan(
     budget: mergedBudget,
     tasks: mergedTasks,
     vendors: mergedVendors,
-    ideas: aiData.ideas.map((idea, idx) => ({
-      id: idea.id || `idea-${idx + 1}`,
-      title: idea.title,
-      description: idea.description,
-      category: idea.category,
-    })),
+    ideas: (aiData.ideas && aiData.ideas.length > 0)
+      ? aiData.ideas.map((idea, idx) => ({
+          id: idea.id || `idea-${idx + 1}`,
+          title: idea.title,
+          description: idea.description,
+          category: idea.category,
+        }))
+      : currentPlan.ideas,
     tombstones,
     updatedAt: new Date().toISOString(),
   };

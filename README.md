@@ -4,7 +4,7 @@
 > **Prompt Wars Virtual Challenge 5 Submission**  
 > Built with React 19, TypeScript (Strict), Tailwind CSS, Vite, Vitest, and the official Google GenAI SDK (`@google/genai`).
 
-[![Tests](https://img.shields.io/badge/Vitest-71%20passed-emerald?style=flat-square&logo=vitest)](src/lib/__tests__)
+[![Tests](https://img.shields.io/badge/Vitest-73%20passed-emerald?style=flat-square&logo=vitest)](src/lib/__tests__)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%200%20errors-blue?style=flat-square&logo=typescript)](tsconfig.json)
 [![Architecture](https://img.shields.io/badge/Architecture-3--Layer%20Deterministic-gold?style=flat-square)]()
 
@@ -120,17 +120,17 @@ Every pure module in `src/lib/` has a companion Vitest test suite. Run the full 
 npx vitest run
 ```
 
-### Test Suite Summary (71 Unit Tests Across 6 Pure Suites)
+### Test Suite Summary (73 Unit Tests Across 6 Pure Suites)
 
 | Test Suite | File | Tests | Coverage Scope |
 | :--- | :--- | :---: | :--- |
-| **Budget Calculations** | [`calculations.test.ts`](file:///c:/Users/moham/Documents/AntiGravity/Planovent/src/lib/__tests__/calculations.test.ts) | 25 | 3-Number budget math, largest-remainder rupee allocation, `sharePercent` edge cases (`sum === 90`, `sum === 120`, `all === 0`), `absorbDeficitByPriority` engine, auto-lock on edit, currency formatting (`formatINR`, `formatCompactINR`), DAG blocker detection. |
-| **AI Schema Boundary** | [`schema.test.ts`](file:///c:/Users/moham/Documents/AntiGravity/Planovent/src/lib/__tests__/schema.test.ts) | 11 | Zod strict validation, rejection of floating share percents, rejection of extra hallucinated fields, input length caps, `/api/generate` fallback retry, `/api/narrate` fast-model requirement. |
-| **Non-Destructive Merge** | [`mergeEngine.test.ts`](file:///c:/Users/moham/Documents/AntiGravity/Planovent/src/lib/__tests__/mergeEngine.test.ts) | 10 | Lock preservation, user quote persistence, tombstone rejection, 3-color DFS cycle breaking, actual spend synchronization. |
-| **What-If Simulator** | [`simulator.test.ts`](file:///c:/Users/moham/Documents/AntiGravity/Planovent/src/lib/__tests__/simulator.test.ts) | 9 | `per_guest`, `step` (positive and negative increments), `fixed` category scaling, lock preservation, priority-weighted deficit absorption, unresolvable deficit detection, exact integer rupee totals. |
-| **Risk Radar Engine** | [`riskEngine.test.ts`](file:///c:/Users/moham/Documents/AntiGravity/Planovent/src/lib/__tests__/riskEngine.test.ts) | 7 | Deterministic evaluation of all 6 rules (over-budget, actual overrun >15%, overdue tasks, blocked DAG tasks, unassigned tasks, pending/unquoted vendors near date), bounded Health Score (0–100). |
-| **Family Summary & Validator** | [`summaryFormatter.test.ts`](file:///c:/Users/moham/Documents/AntiGravity/Planovent/src/lib/__tests__/summaryFormatter.test.ts) | 9 | Plain-text WhatsApp formatting, `en-IN` rupee strings, overdue/blocked task tags, deep Zod schema validation, 200KB payload cap, rejection of string `quotedPrice: "abc"`, malformed tasks. |
-| **Total Test Count** | **6 Suites** | **71 / 71** | **100% Pass Rate (0 Failures)** |
+| **Budget Calculations** | [`calculations.test.ts`](src/lib/__tests__/calculations.test.ts) | 25 | 3-Number budget math, largest-remainder rupee allocation, `sharePercent` edge cases (`sum === 90`, `sum === 120`, `all === 0`), `absorbDeficitByPriority` engine, auto-lock on edit, currency formatting (`formatINR`, `formatCompactINR`), DAG blocker detection. |
+| **AI Schema Boundary** | [`schema.test.ts`](src/lib/__tests__/schema.test.ts) | 12 | Zod strict validation, rejection of floating share percents, rejection of extra hallucinated fields, ideas min 0 validation, input length caps, `/api/generate` fallback retry, `/api/narrate` fast-model requirement. |
+| **Non-Destructive Merge** | [`mergeEngine.test.ts`](src/lib/__tests__/mergeEngine.test.ts) | 11 | Lock preservation, user quote persistence, tombstone rejection, 3-color DFS cycle breaking, actual spend synchronization, preservation of creative ideas when incoming ideas is empty. |
+| **What-If Simulator** | [`simulator.test.ts`](src/lib/__tests__/simulator.test.ts) | 9 | `per_guest`, `step` (positive and negative increments), `fixed` category scaling, lock preservation, priority-weighted deficit absorption, unresolvable deficit detection, exact integer rupee totals. |
+| **Risk Radar Engine** | [`riskEngine.test.ts`](src/lib/__tests__/riskEngine.test.ts) | 7 | Deterministic evaluation of all 6 rules (over-budget, actual overrun >15%, overdue tasks, blocked DAG tasks, unassigned tasks, pending/unquoted vendors near date), bounded Health Score (0–100). |
+| **Family Summary & Validator** | [`summaryFormatter.test.ts`](src/lib/__tests__/summaryFormatter.test.ts) | 9 | Plain-text WhatsApp formatting, `en-IN` rupee strings, overdue/blocked task tags, deep Zod schema validation, 200KB payload cap, rejection of string `quotedPrice: "abc"`, malformed tasks. |
+| **Total Test Count** | **6 Suites** | **73 / 73** | **100% Pass Rate (0 Failures)** |
 
 To verify strict TypeScript compilation and Vite production bundling:
 

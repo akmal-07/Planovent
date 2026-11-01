@@ -336,4 +336,17 @@ describe('mergeEngine - Non-Destructive Invariants', () => {
       taskZ?.dependsOnTaskId === 'task-X';
     expect(cyclePersists).toBe(false);
   });
+
+  it('Invariant: preserves existing currentPlan.ideas if incoming.ideas is empty or undefined', () => {
+    const initialPlan = hydrateInitialPlan(createMockAiData());
+    expect(initialPlan.ideas.length).toBeGreaterThan(0);
+
+    const aiRefinementWithNoIdeas = createMockAiData({
+      ideas: [],
+    });
+
+    const merged = mergeRefinedPlan(initialPlan, aiRefinementWithNoIdeas);
+    expect(merged.ideas).toEqual(initialPlan.ideas);
+    expect(merged.ideas.length).toBe(2);
+  });
 });
