@@ -1,11 +1,56 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   AiGeneratedPlanSchema,
   GenerateRequestSchema,
   RefineRequestSchema,
 } from '../../schemas/geminiSchema';
+import generateHandler from '../../../api/generate.ts';
+
+const mockGenerateContent = vi.fn();
+
+vi.mock('@google/genai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@google/genai')>();
+  return {
+    ...actual,
+    GoogleGenAI: class MockGoogleGenAI {
+      models = {
+        generateContent: (...args: any[]) => mockGenerateContent(...args),
+      };
+    },
+  };
+});
+
+function createMockReqRes(method: string, body: any) {
+  const req = {
+    method,
+    body,
+    headers: {},
+  };
+  let responseData: any = null;
+  let statusCode = 200;
+  const res = {
+    status(code: number) {
+      statusCode = code;
+      return this;
+    },
+    json(data: any) {
+      responseData = data;
+      return this;
+    },
+  };
+  return {
+    req,
+    res,
+    getStatusCode: () => statusCode,
+    getResponseData: () => responseData,
+  };
+}
 
 describe('Zod Boundary Tests (AiGeneratedPlanSchema & Schemas)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   const validAiPayload = {
     title: 'Pooja & Srinivas Royal South Indian Wedding',
     city: 'Hyderabad',
@@ -165,5 +210,73 @@ describe('Zod Boundary Tests (AiGeneratedPlanSchema & Schemas)', () => {
       },
     });
     expect(valid.success).toBe(true);
+  });
+
+  it('fails with a typed error (MISSING_MODEL_CONFIG) when GEMINI_MODEL or GEMINI_MODEL_FAST is missing from env', async () => {
+    const origKey = process.env.GEMINI_API_KEY;
+    const origModel = process.env.GEMINI_MODEL;
+    const origFast = process.env.GEMINI_MODEL_FAST;
+
+    process.env.GEMINI_API_KEY = 'test_api_key_123';
+    delete process.env.GEMINI_MODEL;
+    delete process.env.GEMINI_MODEL_FAST;
+
+    const { req, res, getStatusCode, getResponseData } = createMockReqRes('POST', {
+      prompt: 'Plan wedding in Hyderabad',
+    });
+
+    await generateHandler(req, res);
+
+    expect(getStatusCode()).toBe(500);
+    expect(getResponseData()).toEqual({
+      error: 'GEMINI_MODEL and GEMINI_MODEL_FAST must be configured in server environment.',
+      code: 'MISSING_MODEL_CONFIG',
+    });
+
+    // Restore env
+    process.env.GEMINI_API_KEY = origKey;
+    process.env.GEMINI_MODEL = origModel;
+    process.env.GEMINI_MODEL_FAST = origFast;
+  });
+
+  it('retries once on GEMINI_MODEL_FAST when primary model throws 429/503 and returns modelUsed', async () => {
+    const origKey = process.env.GEMINI_API_KEY;
+    const origModel = process.env.GEMINI_MODEL;
+    const origFast = process.env.GEMINI_MODEL_FAST;
+
+    process.env.GEMINI_API_KEY = 'test_api_key_123';
+    process.env.GEMINI_MODEL = 'gemini-3.8-flash';
+    process.env.GEMINI_MODEL_FAST = 'gemini-3.5-flash-lite';
+
+    // First call (primary) rejects with 429 Resource Exhausted
+    // Second call (fast) resolves with validAiPayload string
+    mockGenerateContent
+      .mockRejectedValueOnce(new Error('429 Resource Exhausted / Rate limit exceeded'))
+      .mockResolvedValueOnce({
+        text: JSON.stringify(validAiPayload),
+      });
+
+    const { req, res, getStatusCode, getResponseData } = createMockReqRes('POST', {
+      prompt: 'Plan traditional ceremony in Hyderabad',
+    });
+
+    await generateHandler(req, res);
+
+    expect(getStatusCode()).toBe(200);
+    const data = getResponseData();
+    expect(data.success).toBe(true);
+    expect(data.modelUsed).toBe('gemini-3.5-flash-lite');
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+
+    // Verify first call was with primary model
+    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3.8-flash');
+    // Verify retry call was with fast model and thinkingLevel LOW
+    expect(mockGenerateContent.mock.calls[1][0].model).toBe('gemini-3.5-flash-lite');
+    expect(mockGenerateContent.mock.calls[1][0].config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
+
+    // Restore env
+    process.env.GEMINI_API_KEY = origKey;
+    process.env.GEMINI_MODEL = origModel;
+    process.env.GEMINI_MODEL_FAST = origFast;
   });
 });

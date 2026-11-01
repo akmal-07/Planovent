@@ -3,7 +3,7 @@
  * Refines an existing celebration plan while respecting user-locked items and priority weights.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import {
   RefineRequestSchema,
   AiGeneratedPlanSchema,
@@ -43,11 +43,13 @@ export default async function handler(req: any, res: any) {
     });
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  if (!modelName) {
+  const primaryModel = process.env.GEMINI_MODEL;
+  const fastModel = process.env.GEMINI_MODEL_FAST;
+
+  if (!primaryModel || !fastModel) {
     return res.status(500).json({
-      error: 'GEMINI_MODEL is not configured.',
-      code: 'MISSING_MODEL_NAME',
+      error: 'GEMINI_MODEL and GEMINI_MODEL_FAST must be configured in server environment.',
+      code: 'MISSING_MODEL_CONFIG',
     });
   }
 
@@ -100,22 +102,44 @@ Refinement Instructions:
 5. In aiSummary, write a 2-3 sentence explanation explaining the trade-offs made and how user priorities were respected.
 `;
 
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: refinementContext,
-      config: {
-        systemInstruction: `You are an elite Indian wedding planner specializing in non-destructive plan refinement.
+    const systemInstruction = `You are an elite Indian wedding planner specializing in non-destructive plan refinement.
 - You strictly obey locked constraints and user priority weights.
 - When budget cuts are requested, you reduce low-priority areas first, never applying blind across-the-board cuts.
 - You never invent real vendor names, phone numbers, or URLs.
-- All monetary amounts must be whole integer INR (no floats).`,
-        responseMimeType: 'application/json',
-        responseSchema: geminiPlanResponseSchema,
-        temperature: 0.2,
-      },
-    });
+- All monetary amounts must be whole integer INR (no floats).`;
 
-    const responseText = response.text;
+    let responseText: string | undefined;
+    let modelUsed = primaryModel;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: primaryModel,
+        contents: refinementContext,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: geminiPlanResponseSchema,
+          temperature: 0.2,
+        },
+      });
+      responseText = response.text;
+    } catch (primaryError: any) {
+      console.warn(`Primary model (${primaryModel}) failed, retrying once on fast model (${fastModel}):`, primaryError?.message);
+      modelUsed = fastModel;
+      const retryResponse = await ai.models.generateContent({
+        model: fastModel,
+        contents: refinementContext,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: geminiPlanResponseSchema,
+          temperature: 0.2,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        },
+      });
+      responseText = retryResponse.text;
+    }
+
     if (!responseText) {
       return res.status(502).json({
         error: 'Empty response received from Gemini API',
@@ -138,6 +162,7 @@ Refinement Instructions:
     return res.status(200).json({
       success: true,
       data: planValidation.data,
+      modelUsed,
     });
   } catch (error: any) {
     console.error('Gemini API refine error:', error);

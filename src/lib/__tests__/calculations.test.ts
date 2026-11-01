@@ -9,6 +9,7 @@ import {
   calculateDaysRemaining,
   toMatchKey,
   allocateBudgetBySharePercent,
+  cutBudgetByPercentage,
 } from '../calculations';
 import type { BudgetCategory, TaskItem, WeddingPlan } from '../../types/plan';
 
@@ -287,5 +288,109 @@ describe('allocateBudgetBySharePercent() with Largest-Remainder Rounding', () =>
     // At least one category receives 34 while others receive 33
     const values = [allocation.venue, allocation.catering, allocation.decor].sort();
     expect(values).toEqual([33, 33, 34]);
+  });
+});
+
+describe('cutBudgetByPercentage() deterministic priority budget cutter', () => {
+  const createMockCutPlan = (): WeddingPlan => ({
+    id: 'plan-cut-test',
+    title: 'Cut Test Plan',
+    city: 'Hyderabad',
+    eventStyle: 'Traditional',
+    guestCount: 200,
+    totalBudget: 800000,
+    accessibilityNeeds: [],
+    functions: [],
+    budget: [
+      { id: '1', key: 'venue', label: 'Venue', priorityWeight: 'high', estimated: 300000, paid: 0, scalingType: 'fixed', source: 'ai', isLocked: false },
+      { id: '2', key: 'catering', label: 'Catering', priorityWeight: 'high', estimated: 250000, paid: 0, scalingType: 'per_guest', source: 'ai', isLocked: false },
+      { id: '3', key: 'decor', label: 'Decor', priorityWeight: 'low', estimated: 80000, paid: 0, scalingType: 'fixed', source: 'ai', isLocked: false },
+      { id: '4', key: 'photo_video', label: 'Photo', priorityWeight: 'high', estimated: 70000, paid: 0, scalingType: 'fixed', source: 'ai', isLocked: false },
+      { id: '5', key: 'entertainment', label: 'Music', priorityWeight: 'medium', estimated: 40000, paid: 0, scalingType: 'fixed', source: 'ai', isLocked: false },
+      { id: '6', key: 'invites', label: 'Invites', priorityWeight: 'low', estimated: 20000, paid: 0, scalingType: 'per_guest', source: 'ai', isLocked: false },
+      { id: '7', key: 'transport', label: 'Transport', priorityWeight: 'medium', estimated: 25000, paid: 0, scalingType: 'step', source: 'ai', isLocked: false },
+      { id: '8', key: 'misc', label: 'Misc', priorityWeight: 'medium', estimated: 15000, paid: 0, scalingType: 'fixed', source: 'ai', isLocked: false },
+    ],
+    tasks: [],
+    vendors: [],
+    ideas: [],
+    tombstones: [],
+    updatedAt: new Date().toISOString(),
+  });
+
+  it('cuts low priority categories first while strictly shielding high priority categories', () => {
+    const plan = createMockCutPlan();
+    // 10% cut of 800,000 = 80,000 reduction. Total sum of low priority (decor: 80k + invites: 20k) is 100k.
+    // The 80k reduction is absorbed entirely by low priority!
+    const reducedPlan = cutBudgetByPercentage(plan, 10);
+
+    expect(reducedPlan.totalBudget).toBe(720000);
+
+    const venue = reducedPlan.budget.find((b) => b.key === 'venue');
+    const catering = reducedPlan.budget.find((b) => b.key === 'catering');
+    const photo = reducedPlan.budget.find((b) => b.key === 'photo_video');
+    const entertainment = reducedPlan.budget.find((b) => b.key === 'entertainment');
+    const decor = reducedPlan.budget.find((b) => b.key === 'decor');
+    const invites = reducedPlan.budget.find((b) => b.key === 'invites');
+
+    // High priority categories are 100% shielded
+    expect(venue?.estimated).toBe(300000);
+    expect(catering?.estimated).toBe(250000);
+    expect(photo?.estimated).toBe(70000);
+
+    // Medium priority is 100% shielded because low priority absorbed the full cut
+    expect(entertainment?.estimated).toBe(40000);
+
+    // Low priority absorbed the cut
+    expect((decor?.estimated || 0) + (invites?.estimated || 0)).toBe(20000);
+
+    // Sum of all categories equals new total budget exactly
+    const totalEstimated = reducedPlan.budget.reduce((s, b) => s + b.estimated, 0);
+    expect(totalEstimated).toBe(720000);
+  });
+
+  it('cascades to medium priority when cut exceeds low priority sum, still shielding high', () => {
+    const plan = createMockCutPlan();
+    // 15% cut of 800,000 = 120,000 reduction.
+    // Low priority total is 100,000 (decor 80k + invites 20k).
+    // Remaining 20,000 must come from medium priority (entertainment 40k + transport 25k + misc 15k = 80k).
+    const reducedPlan = cutBudgetByPercentage(plan, 15);
+
+    expect(reducedPlan.totalBudget).toBe(680000);
+
+    const decor = reducedPlan.budget.find((b) => b.key === 'decor');
+    const invites = reducedPlan.budget.find((b) => b.key === 'invites');
+    const venue = reducedPlan.budget.find((b) => b.key === 'venue');
+    const catering = reducedPlan.budget.find((b) => b.key === 'catering');
+    const photo = reducedPlan.budget.find((b) => b.key === 'photo_video');
+
+    // Low priority is reduced to 0
+    expect(decor?.estimated).toBe(0);
+    expect(invites?.estimated).toBe(0);
+
+    // High priority categories are still 100% shielded!
+    expect(venue?.estimated).toBe(300000);
+    expect(catering?.estimated).toBe(250000);
+    expect(photo?.estimated).toBe(70000);
+
+    // Total sum equals 680,000 exactly
+    const totalEstimated = reducedPlan.budget.reduce((s, b) => s + b.estimated, 0);
+    expect(totalEstimated).toBe(680000);
+  });
+
+  it('preserves locked categories completely during budget cuts', () => {
+    const plan = createMockCutPlan();
+    // User locked decor at 80,000
+    plan.budget = plan.budget.map((b) => (b.key === 'decor' ? { ...b, isLocked: true } : b));
+
+    const reducedPlan = cutBudgetByPercentage(plan, 10);
+    const decor = reducedPlan.budget.find((b) => b.key === 'decor');
+
+    // Locked decor cannot be cut!
+    expect(decor?.estimated).toBe(80000);
+    expect(decor?.isLocked).toBe(true);
+
+    const totalEstimated = reducedPlan.budget.reduce((s, b) => s + b.estimated, 0);
+    expect(totalEstimated).toBe(720000);
   });
 });

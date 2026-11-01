@@ -274,3 +274,124 @@ export function allocateBudgetBySharePercent(
 
   return result;
 }
+
+/**
+ * Deterministic pure function to reduce budget by X%.
+ * Cuts 'low' priority unlocked categories first, then 'medium', strictly shielding 'high'.
+ * All locked categories are 100% preserved.
+ * Integer rupee allocations guaranteed to sum exactly to new total budget.
+ */
+export function cutBudgetByPercentage(
+  plan: WeddingPlan,
+  cutPercent: number
+): WeddingPlan {
+  const percent = Math.max(0, Math.min(100, cutPercent));
+  if (percent === 0) return plan;
+
+  const currentTotal = Math.max(0, Math.round(plan.totalBudget));
+  const newTotalBudget = Math.max(0, Math.round(currentTotal * (1 - percent / 100)));
+  const targetReduction = currentTotal - newTotalBudget;
+
+  if (targetReduction <= 0) return plan;
+
+  // Separate locked and unlocked categories
+  let lockedSum = 0;
+  for (const cat of plan.budget) {
+    if (cat.isLocked) {
+      lockedSum += Math.max(0, Math.round(cat.actual ?? cat.estimated));
+    }
+  }
+
+  const remainingPool = Math.max(0, newTotalBudget - lockedSum);
+  const unlocked = plan.budget.filter((b) => !b.isLocked);
+
+  if (unlocked.length === 0) {
+    return {
+      ...plan,
+      totalBudget: newTotalBudget,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  // Group unlocked by priority
+  const lowCats = unlocked.filter((b) => b.priorityWeight === 'low');
+  const medCats = unlocked.filter((b) => b.priorityWeight === 'medium');
+  const highCats = unlocked.filter((b) => b.priorityWeight === 'high');
+
+  const sumLow = lowCats.reduce((sum, c) => sum + Math.max(0, c.estimated), 0);
+  const sumMed = medCats.reduce((sum, c) => sum + Math.max(0, c.estimated), 0);
+  const sumHigh = highCats.reduce((sum, c) => sum + Math.max(0, c.estimated), 0);
+  const sumUnlocked = sumLow + sumMed + sumHigh;
+
+  const newEstimates: Record<string, number> = {};
+
+  if (sumUnlocked === 0 || remainingPool === 0) {
+    for (const cat of unlocked) {
+      newEstimates[cat.id] = 0;
+    }
+  } else if (targetReduction <= sumLow && sumLow > 0) {
+    // 100% of reduction absorbed by 'low' priority; 'high' and 'medium' 100% shielded
+    for (const cat of highCats) newEstimates[cat.id] = cat.estimated;
+    for (const cat of medCats) newEstimates[cat.id] = cat.estimated;
+
+    const lowRatio = Math.max(0, (sumLow - targetReduction) / sumLow);
+    for (const cat of lowCats) {
+      newEstimates[cat.id] = Math.round(cat.estimated * lowRatio);
+    }
+  } else if (targetReduction <= sumLow + sumMed && sumMed > 0) {
+    // 'low' priority reduced to 0; remainder absorbed by 'medium'; 'high' 100% shielded
+    for (const cat of highCats) newEstimates[cat.id] = cat.estimated;
+    for (const cat of lowCats) newEstimates[cat.id] = 0;
+
+    const remainingToCutFromMed = targetReduction - sumLow;
+    const medRatio = Math.max(0, (sumMed - remainingToCutFromMed) / sumMed);
+    for (const cat of medCats) {
+      newEstimates[cat.id] = Math.round(cat.estimated * medRatio);
+    }
+  } else {
+    // Extreme cut: low and med are 0, remaining taken from high
+    for (const cat of lowCats) newEstimates[cat.id] = 0;
+    for (const cat of medCats) newEstimates[cat.id] = 0;
+
+    const remainingToCutFromHigh = targetReduction - sumLow - sumMed;
+    const highRatio = sumHigh > 0 ? Math.max(0, (sumHigh - remainingToCutFromHigh) / sumHigh) : 0;
+    for (const cat of highCats) {
+      newEstimates[cat.id] = Math.round(cat.estimated * highRatio);
+    }
+  }
+
+  // Adjust difference to ensure exact remainingPool sum
+  const sumFloors = unlocked.reduce((s, c) => s + (newEstimates[c.id] || 0), 0);
+  let diff = remainingPool - sumFloors;
+
+  const sortedUnlocked = [...unlocked].sort((a, b) => (newEstimates[b.id] || 0) - (newEstimates[a.id] || 0));
+  if (sortedUnlocked.length > 0) {
+    let i = 0;
+    while (diff !== 0 && i < 1000) {
+      const cat = sortedUnlocked[i % sortedUnlocked.length];
+      if (diff > 0) {
+        newEstimates[cat.id] = (newEstimates[cat.id] || 0) + 1;
+        diff--;
+      } else if (diff < 0 && (newEstimates[cat.id] || 0) > 0) {
+        newEstimates[cat.id] = (newEstimates[cat.id] || 0) - 1;
+        diff++;
+      }
+      i++;
+    }
+  }
+
+  const updatedBudget = plan.budget.map((cat) => {
+    if (cat.isLocked) return cat;
+    return {
+      ...cat,
+      estimated: newEstimates[cat.id] ?? 0,
+    };
+  });
+
+  return {
+    ...plan,
+    totalBudget: newTotalBudget,
+    budget: updatedBudget,
+    updatedAt: new Date().toISOString(),
+  };
+}

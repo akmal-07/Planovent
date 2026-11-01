@@ -3,7 +3,7 @@
  * Generates initial celebration plan using official @google/genai SDK with strict JSON schema.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import {
   GenerateRequestSchema,
   AiGeneratedPlanSchema,
@@ -43,11 +43,13 @@ export default async function handler(req: any, res: any) {
     });
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  if (!modelName) {
+  const primaryModel = process.env.GEMINI_MODEL;
+  const fastModel = process.env.GEMINI_MODEL_FAST;
+
+  if (!primaryModel || !fastModel) {
     return res.status(500).json({
-      error: 'GEMINI_MODEL is not configured.',
-      code: 'MISSING_MODEL_NAME',
+      error: 'GEMINI_MODEL and GEMINI_MODEL_FAST must be configured in server environment.',
+      code: 'MISSING_MODEL_CONFIG',
     });
   }
 
@@ -72,22 +74,44 @@ Generate a complete, culturally authentic Indian wedding plan adhering strictly 
 7. Concise 2-3 sentence aiSummary explaining trade-offs.
 `;
 
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: promptContext,
-      config: {
-        systemInstruction: `You are an elite Indian wedding architecture and celebration planning AI.
+    const systemInstruction = `You are an elite Indian wedding architecture and celebration planning AI.
 - All monetary amounts must be whole integer INR (no floats, no decimals).
 - You strictly obey the response schema.
 - You never invent real vendor business names, phone numbers, or addresses.
-- You allocate budgets based on priorities, protecting high-priority categories.`,
-        responseMimeType: 'application/json',
-        responseSchema: geminiPlanResponseSchema,
-        temperature: 0.2, // Low temperature for deterministic financial adherence
-      },
-    });
+- You allocate budgets based on priorities, protecting high-priority categories.`;
 
-    const responseText = response.text;
+    let responseText: string | undefined;
+    let modelUsed = primaryModel;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: primaryModel,
+        contents: promptContext,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: geminiPlanResponseSchema,
+          temperature: 0.2,
+        },
+      });
+      responseText = response.text;
+    } catch (primaryError: any) {
+      console.warn(`Primary model (${primaryModel}) failed, retrying once on fast model (${fastModel}):`, primaryError?.message);
+      modelUsed = fastModel;
+      const retryResponse = await ai.models.generateContent({
+        model: fastModel,
+        contents: promptContext,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: geminiPlanResponseSchema,
+          temperature: 0.2,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        },
+      });
+      responseText = retryResponse.text;
+    }
+
     if (!responseText) {
       return res.status(502).json({
         error: 'Empty response received from Gemini API',
@@ -110,6 +134,7 @@ Generate a complete, culturally authentic Indian wedding plan adhering strictly 
     return res.status(200).json({
       success: true,
       data: planValidation.data,
+      modelUsed,
     });
   } catch (error: any) {
     console.error('Gemini API generateContent error:', error);

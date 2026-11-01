@@ -26,6 +26,10 @@
   - Maintain `lastSnapshot: WeddingPlan | null` to support a 1-click transactional undo.
   - `lastSnapshot` must be cleared (`null`) whenever the user performs any manual edit after an AI action to prevent restoring stale states.
 - **No Simulated/Demo Fallbacks**: Never simulate or fake AI output. Missing API keys or Gemini failures must return a typed error (`{ error: string, code: string }`), display a clear error banner in the UI, and leave the existing plan 100% untouched.
+- **Zero Hardcoded Model Defaults & Dual-Model Fallback**:
+  - `GEMINI_MODEL` and `GEMINI_MODEL_FAST` are strictly read from environment variables with **zero hardcoded model strings in `.ts` files**.
+  - On 429/5xx errors, retry once on `GEMINI_MODEL_FAST` and return `modelUsed`.
+  - For fast calls in `@google/genai`, use `thinkingConfig: { thinkingLevel: 'LOW' }` (never deprecated integer `thinkingBudget`).
 - **Zero Hallucinated Vendors**: Never invent business names, phone numbers, or contacts. Real vendor names only exist inside `VendorSlot.quotes[]` entered by the user.
 
 ## 3. Security, Testing & Accessibility (Grader Metrics)
