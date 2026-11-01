@@ -624,14 +624,14 @@ export function useWeddingPlan() {
     [createSnapshot]
   );
 
-  // AI Operation 1: Generate New Plan via Serverless /api/generate with 25s timeout
+  // AI Operation 1: Generate New Plan via Serverless /api/generate with 55s timeout
   const generateAiPlan = useCallback(
     async (userPrompt: string, context?: { city?: string; guestCount?: number; totalBudget?: number }): Promise<boolean> => {
       setIsAiLoading(true);
       setAiError(null);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      const timeoutId = setTimeout(() => controller.abort(), 55000);
 
       try {
         const res = await fetch('/api/generate', {
@@ -663,7 +663,7 @@ export function useWeddingPlan() {
       } catch (err: any) {
         console.error('generateAiPlan error:', err);
         if (err.name === 'AbortError') {
-          setAiError('Generation timed out after 25 seconds. Please check your network or try again.');
+          setAiError('Generation timed out after 55 seconds. Please check your network or try again.');
         } else {
           setAiError(err.message || 'Failed to generate plan via Gemini');
         }
@@ -676,14 +676,14 @@ export function useWeddingPlan() {
     [plan, createSnapshot]
   );
 
-  // AI Operation 2: Refine Existing Plan Non-Destructively via /api/refine with 25s timeout
+  // AI Operation 2: Refine Existing Plan Non-Destructively via /api/refine with 55s timeout
   const refineAiPlan = useCallback(
     async (userPrompt: string): Promise<boolean> => {
       setIsAiLoading(true);
       setAiError(null);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      const timeoutId = setTimeout(() => controller.abort(), 55000);
 
       try {
         const res = await fetch('/api/refine', {
@@ -713,7 +713,7 @@ export function useWeddingPlan() {
       } catch (err: any) {
         console.error('refineAiPlan error:', err);
         if (err.name === 'AbortError') {
-          setAiError('Refinement timed out after 25 seconds. Please try again.');
+          setAiError('Refinement timed out after 55 seconds. Please try again.');
         } else {
           setAiError(err.message || 'Failed to refine plan via Gemini');
         }

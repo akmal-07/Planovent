@@ -16,7 +16,7 @@ import {
 export const maxDuration = 30;
 export const config = { maxDuration: 30 };
 
-const MODEL_TIMEOUT_MS = 12000; // 12 seconds per attempt
+const MODEL_TIMEOUT_MS = 25000; // 25 seconds per attempt
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
