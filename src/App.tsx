@@ -8,12 +8,16 @@ import { BudgetTable } from './components/budget/BudgetTable';
 import { TaskChecklist } from './components/timeline/TaskChecklist';
 import { VendorGrid } from './components/vendors/VendorGrid';
 import { WhatIfPreview } from './components/simulator/WhatIfPreview';
+import { AiCopilotBar } from './components/ai/AiCopilotBar';
 
 export const App: React.FC = () => {
   const {
     plan,
     summary,
     hasSnapshot,
+    isAiLoading,
+    aiError,
+    aiSummary,
     loadBenchmarkPlan,
     resetPlan,
     updateEventDetails,
@@ -30,7 +34,12 @@ export const App: React.FC = () => {
     addVendorQuote,
     finalizeVendorQuote,
     deleteVendorQuote,
-    undoLastChange,
+    convertIdeaToTask,
+    generateAiPlan,
+    refineAiPlan,
+    simulateLocalRefinement,
+    undoLastAiChange,
+    dismissAiError,
   } = useWeddingPlan();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('budget');
@@ -44,7 +53,7 @@ export const App: React.FC = () => {
         hasSnapshot={hasSnapshot}
         onLoadBenchmark={loadBenchmarkPlan}
         onReset={resetPlan}
-        onUndo={undoLastChange}
+        onUndo={undoLastAiChange}
         onOpenSetup={() => setIsSetupOpen(true)}
       />
 
@@ -57,7 +66,22 @@ export const App: React.FC = () => {
       />
 
       {/* 3. Main Content Landmark */}
-      <main id="main-content" role="main" className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      <main id="main-content" role="main" className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6">
+        {/* Gemini AI Copilot & Non-Destructive Refinement Bar */}
+        <AiCopilotBar
+          plan={plan}
+          isAiLoading={isAiLoading}
+          aiError={aiError}
+          aiSummary={aiSummary}
+          hasSnapshot={hasSnapshot}
+          onGenerate={(prompt) => generateAiPlan(prompt)}
+          onRefine={(prompt) => refineAiPlan(prompt)}
+          onSimulateRefine={(prompt) => simulateLocalRefinement(prompt)}
+          onUndo={undoLastAiChange}
+          onDismissError={dismissAiError}
+          onConvertIdeaToTask={convertIdeaToTask}
+        />
+
         {/* Tab 1: Smart Budget Architecture */}
         {activeTab === 'budget' && (
           <div role="tabpanel" id="panel-budget" aria-labelledby="tab-budget" className="space-y-6 animate-fadeIn">
@@ -128,7 +152,7 @@ export const App: React.FC = () => {
             <span>•</span>
             <span>Prompt Wars Virtual Challenge 5</span>
             <span>•</span>
-            <span className="text-gold-400 font-medium">Bit 1 Architecture Locked</span>
+            <span className="text-gold-400 font-medium">Bit 2: AI Copilot & Non-Destructive Merge Engine</span>
           </div>
           <div className="text-stone-400">
             Deterministic Math: <code className="font-mono text-stone-300">src/lib/calculations.ts</code> • Zero Hallucinated Vendors

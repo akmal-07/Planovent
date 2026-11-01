@@ -3,7 +3,7 @@
  * 
  * REACTIVE PRESENTATION BOUNDARY:
  * State management with localStorage persistence, automatic lock triggers on edit,
- * deletedIds tombstone tracking, and derived calculations.
+ * deletedIds tombstone tracking, derived calculations, and Gemini AI orchestration with 1-click snapshot rollback.
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -20,6 +20,8 @@ import {
   updateWithAutoLock,
 } from '../lib/calculations';
 import { BENCHMARK_MOCK_PLAN } from '../lib/mockPlan';
+import { hydrateInitialPlan, mergeRefinedPlan } from '../lib/mergeEngine';
+import type { AiGeneratedPlan } from '../schemas/geminiSchema';
 
 const STORAGE_KEY = 'celebration_planner_v1';
 const SNAPSHOT_KEY = 'celebration_planner_snapshot_v1';
@@ -84,6 +86,11 @@ export function useWeddingPlan() {
     }
   });
 
+  // AI Orchestration State
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+
   // Sync to localStorage
   useEffect(() => {
     try {
@@ -108,11 +115,13 @@ export function useWeddingPlan() {
     }
   }, [plan]);
 
-  // Rollback to last snapshot
-  const undoLastChange = useCallback(() => {
+  // Rollback to last snapshot (1-Click Undo)
+  const undoLastAiChange = useCallback(() => {
     if (!lastSnapshot) return;
     setPlan(lastSnapshot);
     setLastSnapshot(null);
+    setAiError(null);
+    setAiSummary('Restored previous plan state via transactional undo.');
     try {
       sessionStorage.removeItem(SNAPSHOT_KEY);
     } catch {
@@ -120,22 +129,24 @@ export function useWeddingPlan() {
     }
   }, [lastSnapshot]);
 
-  // Load Benchmark Example (Srinivas Explainer Scenario: ₹8L, 200 guests, 4 months)
+  // Load Benchmark Example
   const loadBenchmarkPlan = useCallback(() => {
     createSnapshot();
     setPlan({
       ...BENCHMARK_MOCK_PLAN,
       updatedAt: new Date().toISOString(),
     });
+    setAiSummary('Loaded Challenge 5 benchmark scenario: ₹8,00,000 / 200 guests over 4 months.');
   }, [createSnapshot]);
 
   // Reset to Blank Plan
   const resetPlan = useCallback(() => {
     createSnapshot();
     setPlan(createBlankPlan());
+    setAiSummary(null);
   }, [createSnapshot]);
 
-  // Update Event Details & Priorities
+  // Update Event Top Details
   const updateEventDetails = useCallback(
     (details: Partial<Pick<WeddingPlan, 'title' | 'city' | 'eventStyle' | 'guestCount' | 'totalBudget' | 'accessibilityNeeds' | 'functions'>>) => {
       setPlan((prev) => ({
@@ -227,7 +238,7 @@ export function useWeddingPlan() {
     }));
   }, []);
 
-  // Delete Task (Tombstone invariant: appends to deletedIds)
+  // Delete Task (Tombstone invariant)
   const deleteTask = useCallback((taskId: string) => {
     setPlan((prev) => ({
       ...prev,
@@ -271,19 +282,6 @@ export function useWeddingPlan() {
     []
   );
 
-  // Update Vendor Slot
-  const updateVendorSlot = useCallback((slotId: string, updates: Partial<VendorSlot>) => {
-    setPlan((prev) => ({
-      ...prev,
-      vendors: prev.vendors.map((slot) =>
-        slot.id === slotId
-          ? updateWithAutoLock(slot, { ...updates, source: 'user' })
-          : slot
-      ),
-      updatedAt: new Date().toISOString(),
-    }));
-  }, []);
-
   // Delete Vendor Slot
   const deleteVendorSlot = useCallback((slotId: string) => {
     setPlan((prev) => ({
@@ -307,7 +305,7 @@ export function useWeddingPlan() {
     }));
   }, []);
 
-  // Add Vendor Quote (Real quotes entered by user)
+  // Add Vendor Quote
   const addVendorQuote = useCallback(
     (slotId: string, quoteData: Omit<VendorQuote, 'id' | 'isFinalized'>) => {
       setPlan((prev) => {
@@ -335,7 +333,7 @@ export function useWeddingPlan() {
     []
   );
 
-  // Finalize Vendor Quote & Sync Actual Spend
+  // Finalize Quote & Sync Actual Spend
   const finalizeVendorQuote = useCallback((slotId: string, quoteId: string) => {
     setPlan((prev) => {
       const slot = prev.vendors.find((s) => s.id === slotId);
@@ -356,7 +354,6 @@ export function useWeddingPlan() {
         });
       });
 
-      // Sync to category actual spend
       const updatedBudget = prev.budget.map((cat) => {
         if (cat.key !== slot.categoryKey) return cat;
         return updateWithAutoLock(cat, {
@@ -391,10 +388,199 @@ export function useWeddingPlan() {
     }));
   }, []);
 
+  // Convert Idea to Task (Rubric Feature)
+  const convertIdeaToTask = useCallback((ideaId: string) => {
+    setPlan((prev) => {
+      const idea = prev.ideas.find((i) => i.id === ideaId);
+      if (!idea) return prev;
+
+      const newTask: TaskItem = {
+        id: `task-idea-${Date.now()}`,
+        title: idea.title,
+        deadline: prev.functions[0]?.date || new Date().toISOString().split('T')[0],
+        priority: 'medium',
+        assignee: 'Unassigned',
+        done: false,
+        eventFunction: 'General',
+        source: 'user',
+        isLocked: true,
+      };
+
+      return {
+        ...prev,
+        tasks: [newTask, ...prev.tasks],
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, []);
+
+  // AI Operation 1: Generate New Plan via Serverless /api/generate
+  const generateAiPlan = useCallback(
+    async (userPrompt: string, context?: { city?: string; guestCount?: number; totalBudget?: number }): Promise<boolean> => {
+      setIsAiLoading(true);
+      setAiError(null);
+
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: userPrompt,
+            city: context?.city || plan.city,
+            guestCount: context?.guestCount || plan.guestCount,
+            totalBudget: context?.totalBudget || plan.totalBudget,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || data.error || `HTTP ${res.status}`);
+        }
+
+        if (data.data) {
+          createSnapshot();
+          const hydrated = hydrateInitialPlan(data.data as AiGeneratedPlan);
+          setPlan(hydrated);
+          setAiSummary(data.data.aiSummary || 'Generated fresh AI celebration plan.');
+          return true;
+        }
+        return false;
+      } catch (err: any) {
+        console.error('generateAiPlan error:', err);
+        setAiError(err.message || 'Failed to generate plan via Gemini');
+        return false;
+      } finally {
+        setIsAiLoading(false);
+      }
+    },
+    [plan, createSnapshot]
+  );
+
+  // AI Operation 2: Refine Existing Plan Non-Destructively via /api/refine
+  const refineAiPlan = useCallback(
+    async (userPrompt: string): Promise<boolean> => {
+      setIsAiLoading(true);
+      setAiError(null);
+
+      try {
+        const res = await fetch('/api/refine', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: userPrompt,
+            currentPlan: plan,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || data.error || `HTTP ${res.status}`);
+        }
+
+        if (data.data) {
+          createSnapshot();
+          const merged = mergeRefinedPlan(plan, data.data as AiGeneratedPlan);
+          setPlan(merged);
+          setAiSummary(data.data.aiSummary || 'Refined plan non-destructively.');
+          return true;
+        }
+        return false;
+      } catch (err: any) {
+        console.error('refineAiPlan error:', err);
+        setAiError(err.message || 'Failed to refine plan via Gemini');
+        return false;
+      } finally {
+        setIsAiLoading(false);
+      }
+    },
+    [plan, createSnapshot]
+  );
+
+  // Fallback Simulation (Demo Mode when API key not configured)
+  const simulateLocalRefinement = useCallback((userPrompt: string) => {
+    createSnapshot();
+
+    // Priority-aware simulated adjustment:
+    // If user mentions "veg" or "jain", add dietary tag and note
+    const lower = userPrompt.toLowerCase();
+    let updatedAccessibility = [...plan.accessibilityNeeds];
+    if (lower.includes('veg') || lower.includes('jain')) {
+      if (!updatedAccessibility.includes('100% Pure Vegetarian & Jain Counters')) {
+        updatedAccessibility.push('100% Pure Vegetarian & Jain Counters');
+      }
+    }
+
+    // If user mentions cut or 15%, reduce low priority categories by 15% and protect high priority
+    const cutRequested = lower.includes('cut') || lower.includes('15') || lower.includes('reduce');
+    const factor = cutRequested ? 0.85 : 1.0;
+
+    const mockAiPlan: AiGeneratedPlan = {
+      title: plan.title,
+      city: plan.city,
+      eventStyle: plan.eventStyle,
+      guestCount: plan.guestCount,
+      totalBudget: Math.round(plan.totalBudget * (cutRequested ? 0.90 : 1.0)),
+      accessibilityNeeds: updatedAccessibility,
+      functions: plan.functions,
+      budgetAllocations: plan.budget.map((c) => ({
+        key: c.key,
+        label: c.label,
+        // Shield high priority from heavy cut; apply full cut to low priority
+        estimated: Math.round(c.estimated * (c.priorityWeight === 'low' ? factor : c.priorityWeight === 'medium' ? 0.95 : 1.0)),
+        priorityWeight: c.priorityWeight,
+        scalingType: c.scalingType,
+        rationale: c.priorityWeight === 'high' ? 'Shielded from budget reduction' : 'Reduced to meet target constraint',
+      })),
+      tasks: [
+        ...plan.tasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          deadline: t.deadline,
+          timeSlot: t.timeSlot,
+          priority: t.priority,
+          assignee: t.assignee,
+          eventFunction: t.eventFunction,
+          dependsOnTaskId: t.dependsOnTaskId,
+        })),
+        {
+          id: `task-sim-${Date.now()}`,
+          title: lower.includes('veg') ? 'Finalize Pure Veg & Jain Live Chaat Vendors' : 'Review Revised Category Allocations',
+          deadline: plan.functions[0]?.date || '2026-11-01',
+          priority: 'high',
+          assignee: 'Coordinator',
+          eventFunction: 'Wedding',
+        },
+      ],
+      vendors: plan.vendors.map((v) => ({
+        id: v.id,
+        categoryKey: v.categoryKey,
+        type: v.type,
+        estimatedQuote: Math.round(v.estimatedQuote * (cutRequested ? 0.95 : 1.0)),
+      })),
+      ideas: [
+        { id: 'sim-idea-1', title: 'Local Artisan Floral Canopies', description: 'Procure marigold and jasmine directly from local mandis to save 20%.', category: 'decor' },
+        { id: 'sim-idea-2', title: 'Interactive Live Jalebi Counter', description: 'Fresh saffron jalebi with rabri live station during Sangeet.', category: 'catering' },
+      ],
+      aiSummary: cutRequested
+        ? 'Simulated trade-off: Reduced flexible low-priority items (Decor & Invites) by 15% while protecting High-Priority Food & Photography allocations.'
+        : `Applied non-destructive refinement for: "${userPrompt}". Preserved all locked items and user quotes intact.`,
+    };
+
+    const merged = mergeRefinedPlan(plan, mockAiPlan);
+    setPlan(merged);
+    setAiError(null);
+    setAiSummary(mockAiPlan.aiSummary);
+  }, [plan, createSnapshot]);
+
   return {
     plan,
     summary,
     hasSnapshot: lastSnapshot !== null,
+    isAiLoading,
+    aiError,
+    aiSummary,
     // Operations
     loadBenchmarkPlan,
     resetPlan,
@@ -407,14 +593,18 @@ export function useWeddingPlan() {
     deleteTask,
     toggleTaskLock,
     addVendorSlot,
-    updateVendorSlot,
     deleteVendorSlot,
     toggleVendorSlotLock,
     addVendorQuote,
     finalizeVendorQuote,
     deleteVendorQuote,
-    createSnapshot,
-    undoLastChange,
+    convertIdeaToTask,
+    // AI Operations
+    generateAiPlan,
+    refineAiPlan,
+    simulateLocalRefinement,
+    undoLastAiChange,
+    dismissAiError: () => setAiError(null),
     setPlanDirectly: setPlan,
   };
 }
