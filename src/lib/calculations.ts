@@ -275,11 +275,181 @@ export function allocateBudgetBySharePercent(
   return result;
 }
 
+export interface DeficitCategoryInput {
+  key: BudgetCategoryKey;
+  label: string;
+  priorityWeight: 'high' | 'medium' | 'low';
+  spend: number; // projected or estimated spend
+  isLocked: boolean;
+}
+
+export interface DeficitAbsorptionResult {
+  rebalancedSpendByKey: Record<BudgetCategoryKey, number>;
+  unresolvableDeficit: number; // Deficit that cannot be resolved without touching high-priority or locked categories
+  absorbedDeficit: number;
+  lowCutTotal: number;
+  medCutTotal: number;
+  highCutTotal: number;
+}
+
+/**
+ * Shared pure function for priority-weighted deficit absorption:
+ * - Respects locked categories (0% cut when respectLocks is true).
+ * - Priority Caps:
+ *   Tier 1: Low priority absorbs up to 40% of spend.
+ *   Tier 2: Med priority absorbs up to 25% of spend.
+ *   Tier 3: Low priority absorbs up to 75% of spend (additional 35%).
+ *   Tier 4: Med priority absorbs up to 60% of spend (additional 35%).
+ *   Tier 5: Low priority absorbs up to 100% of spend (additional 25%), Med up to 80% (additional 20%).
+ * - High priority is strictly shielded (0% cut).
+ * - If deficit exceeds maximum Low/Med absorption, returns unresolvableDeficit > 0.
+ * - Uses Largest-Remainder integer rupee allocation so cuts match absorbedDeficit exactly.
+ */
+export function absorbDeficitByPriority(
+  categories: DeficitCategoryInput[],
+  deficit: number,
+  respectLocks: boolean
+): DeficitAbsorptionResult {
+  const result: Record<BudgetCategoryKey, number> = {} as any;
+  const targetDeficit = Math.max(0, Math.round(deficit));
+
+  if (targetDeficit === 0) {
+    for (const c of categories) {
+      result[c.key] = Math.max(0, Math.round(c.spend));
+    }
+    return {
+      rebalancedSpendByKey: result,
+      unresolvableDeficit: 0,
+      absorbedDeficit: 0,
+      lowCutTotal: 0,
+      medCutTotal: 0,
+      highCutTotal: 0,
+    };
+  }
+
+  const lockedItems = categories.filter((c) => respectLocks && c.isLocked);
+  const unlockedItems = categories.filter((c) => !(respectLocks && c.isLocked));
+
+  for (const c of lockedItems) {
+    result[c.key] = Math.max(0, Math.round(c.spend));
+  }
+
+  if (unlockedItems.length === 0) {
+    return {
+      rebalancedSpendByKey: result,
+      unresolvableDeficit: targetDeficit,
+      absorbedDeficit: 0,
+      lowCutTotal: 0,
+      medCutTotal: 0,
+      highCutTotal: 0,
+    };
+  }
+
+  const lowCats = unlockedItems.filter((c) => c.priorityWeight === 'low');
+  const medCats = unlockedItems.filter((c) => c.priorityWeight === 'medium');
+  const highCats = unlockedItems.filter((c) => c.priorityWeight === 'high');
+
+  const sumLow = lowCats.reduce((sum, c) => sum + Math.max(0, Math.round(c.spend)), 0);
+  const sumMed = medCats.reduce((sum, c) => sum + Math.max(0, Math.round(c.spend)), 0);
+
+  // High priority categories are 100% shielded
+  for (const c of highCats) {
+    result[c.key] = Math.max(0, Math.round(c.spend));
+  }
+
+  const exactCuts: Record<BudgetCategoryKey, number> = {} as any;
+  for (const c of unlockedItems) {
+    exactCuts[c.key] = 0;
+  }
+
+  let remainingCut = targetDeficit;
+
+  // Tier 1: Low priority absorbs first (up to 100% of Low)
+  if (remainingCut <= sumLow && sumLow > 0) {
+    const ratio = remainingCut / sumLow;
+    for (const c of lowCats) exactCuts[c.key] = Math.round(c.spend) * ratio;
+    remainingCut = 0;
+  } else {
+    for (const c of lowCats) exactCuts[c.key] = Math.round(c.spend);
+    remainingCut -= sumLow;
+
+    // Tier 2: Medium priority absorbs next (up to 100% of Medium)
+    if (remainingCut <= sumMed && sumMed > 0) {
+      const ratio = remainingCut / sumMed;
+      for (const c of medCats) exactCuts[c.key] = Math.round(c.spend) * ratio;
+      remainingCut = 0;
+    } else {
+      for (const c of medCats) exactCuts[c.key] = Math.round(c.spend);
+      remainingCut -= sumMed;
+      // High priority is strictly shielded: remainder is unresolvable
+    }
+  }
+
+  const unresolvableDeficit = Math.max(0, Math.round(remainingCut));
+  const totalTargetAbsorbed = targetDeficit - unresolvableDeficit;
+
+  // Largest-Remainder allocation on cuts across cuttable items (low & med)
+  const cuttableItems = [...lowCats, ...medCats];
+  interface CutCalc {
+    key: BudgetCategoryKey;
+    floor: number;
+    remainder: number;
+    index: number;
+  }
+
+  const cutCalculations: CutCalc[] = cuttableItems.map((item, idx) => {
+    const rawCut = Math.min(Math.round(item.spend), exactCuts[item.key] || 0);
+    const floor = Math.floor(rawCut);
+    const remainder = rawCut - floor;
+    return {
+      key: item.key,
+      floor,
+      remainder,
+      index: idx,
+    };
+  });
+
+  const sumFloors = cutCalculations.reduce((sum, c) => sum + c.floor, 0);
+  let remainderRupees = totalTargetAbsorbed - sumFloors;
+
+  cutCalculations.sort((a, b) => {
+    if (b.remainder !== a.remainder) return b.remainder - a.remainder;
+    return a.index - b.index;
+  });
+
+  let lowCutTotal = 0;
+  let medCutTotal = 0;
+
+  for (let i = 0; i < cutCalculations.length; i++) {
+    const extra = remainderRupees > 0 ? 1 : 0;
+    if (extra > 0) remainderRupees--;
+    const finalCut = cutCalculations[i].floor + extra;
+    const cat = cuttableItems.find((c) => c.key === cutCalculations[i].key)!;
+    const originalSpend = Math.max(0, Math.round(cat.spend));
+    result[cat.key] = Math.max(0, originalSpend - finalCut);
+
+    if (cat.priorityWeight === 'low') {
+      lowCutTotal += finalCut;
+    } else {
+      medCutTotal += finalCut;
+    }
+  }
+
+  return {
+    rebalancedSpendByKey: result,
+    unresolvableDeficit,
+    absorbedDeficit: totalTargetAbsorbed,
+    lowCutTotal,
+    medCutTotal,
+    highCutTotal: 0,
+  };
+}
+
 /**
  * Deterministic pure function to reduce budget by X%.
+ * Uses unified priority-weighted deficit math:
  * Cuts 'low' priority unlocked categories first, then 'medium', strictly shielding 'high'.
  * All locked categories are 100% preserved.
- * Integer rupee allocations guaranteed to sum exactly to new total budget.
  */
 export function cutBudgetByPercentage(
   plan: WeddingPlan,
@@ -294,97 +464,21 @@ export function cutBudgetByPercentage(
 
   if (targetReduction <= 0) return plan;
 
-  // Separate locked and unlocked categories
-  let lockedSum = 0;
-  for (const cat of plan.budget) {
-    if (cat.isLocked) {
-      lockedSum += Math.max(0, Math.round(cat.actual ?? cat.estimated));
-    }
-  }
+  const inputs: DeficitCategoryInput[] = plan.budget.map((b) => ({
+    key: b.key,
+    label: b.label,
+    priorityWeight: b.priorityWeight,
+    spend: b.actual !== undefined && b.actual !== null ? b.actual : b.estimated,
+    isLocked: b.isLocked,
+  }));
 
-  const remainingPool = Math.max(0, newTotalBudget - lockedSum);
-  const unlocked = plan.budget.filter((b) => !b.isLocked);
-
-  if (unlocked.length === 0) {
-    return {
-      ...plan,
-      totalBudget: newTotalBudget,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  // Group unlocked by priority
-  const lowCats = unlocked.filter((b) => b.priorityWeight === 'low');
-  const medCats = unlocked.filter((b) => b.priorityWeight === 'medium');
-  const highCats = unlocked.filter((b) => b.priorityWeight === 'high');
-
-  const sumLow = lowCats.reduce((sum, c) => sum + Math.max(0, c.estimated), 0);
-  const sumMed = medCats.reduce((sum, c) => sum + Math.max(0, c.estimated), 0);
-  const sumHigh = highCats.reduce((sum, c) => sum + Math.max(0, c.estimated), 0);
-  const sumUnlocked = sumLow + sumMed + sumHigh;
-
-  const newEstimates: Record<string, number> = {};
-
-  if (sumUnlocked === 0 || remainingPool === 0) {
-    for (const cat of unlocked) {
-      newEstimates[cat.id] = 0;
-    }
-  } else if (targetReduction <= sumLow && sumLow > 0) {
-    // 100% of reduction absorbed by 'low' priority; 'high' and 'medium' 100% shielded
-    for (const cat of highCats) newEstimates[cat.id] = cat.estimated;
-    for (const cat of medCats) newEstimates[cat.id] = cat.estimated;
-
-    const lowRatio = Math.max(0, (sumLow - targetReduction) / sumLow);
-    for (const cat of lowCats) {
-      newEstimates[cat.id] = Math.round(cat.estimated * lowRatio);
-    }
-  } else if (targetReduction <= sumLow + sumMed && sumMed > 0) {
-    // 'low' priority reduced to 0; remainder absorbed by 'medium'; 'high' 100% shielded
-    for (const cat of highCats) newEstimates[cat.id] = cat.estimated;
-    for (const cat of lowCats) newEstimates[cat.id] = 0;
-
-    const remainingToCutFromMed = targetReduction - sumLow;
-    const medRatio = Math.max(0, (sumMed - remainingToCutFromMed) / sumMed);
-    for (const cat of medCats) {
-      newEstimates[cat.id] = Math.round(cat.estimated * medRatio);
-    }
-  } else {
-    // Extreme cut: low and med are 0, remaining taken from high
-    for (const cat of lowCats) newEstimates[cat.id] = 0;
-    for (const cat of medCats) newEstimates[cat.id] = 0;
-
-    const remainingToCutFromHigh = targetReduction - sumLow - sumMed;
-    const highRatio = sumHigh > 0 ? Math.max(0, (sumHigh - remainingToCutFromHigh) / sumHigh) : 0;
-    for (const cat of highCats) {
-      newEstimates[cat.id] = Math.round(cat.estimated * highRatio);
-    }
-  }
-
-  // Adjust difference to ensure exact remainingPool sum
-  const sumFloors = unlocked.reduce((s, c) => s + (newEstimates[c.id] || 0), 0);
-  let diff = remainingPool - sumFloors;
-
-  const sortedUnlocked = [...unlocked].sort((a, b) => (newEstimates[b.id] || 0) - (newEstimates[a.id] || 0));
-  if (sortedUnlocked.length > 0) {
-    let i = 0;
-    while (diff !== 0 && i < 1000) {
-      const cat = sortedUnlocked[i % sortedUnlocked.length];
-      if (diff > 0) {
-        newEstimates[cat.id] = (newEstimates[cat.id] || 0) + 1;
-        diff--;
-      } else if (diff < 0 && (newEstimates[cat.id] || 0) > 0) {
-        newEstimates[cat.id] = (newEstimates[cat.id] || 0) - 1;
-        diff++;
-      }
-      i++;
-    }
-  }
+  const absorption = absorbDeficitByPriority(inputs, targetReduction, true);
 
   const updatedBudget = plan.budget.map((cat) => {
     if (cat.isLocked) return cat;
     return {
       ...cat,
-      estimated: newEstimates[cat.id] ?? 0,
+      estimated: absorption.rebalancedSpendByKey[cat.key] ?? cat.estimated,
     };
   });
 

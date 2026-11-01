@@ -27,6 +27,7 @@ import {
 import { evaluatePlanRisks } from '../lib/riskEngine';
 import { BENCHMARK_MOCK_PLAN } from '../lib/mockPlan';
 import { hydrateInitialPlan, mergeRefinedPlan } from '../lib/mergeEngine';
+import { validateImportedPlanJson } from '../lib/summaryFormatter';
 import type { AiGeneratedPlan } from '../schemas/geminiSchema';
 
 const STORAGE_KEY = 'celebration_planner_v1';
@@ -75,18 +76,12 @@ export function useWeddingPlan() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved);
-        // Safely migrate legacy plans with deletedIds -> structured tombstones
-        if (!Array.isArray(parsed.tombstones)) {
-          const legacyDeleted: string[] = Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [];
-          parsed.tombstones = legacyDeleted.map((id) => ({
-            id,
-            matchKey: toMatchKey(id),
-            label: id,
-          }));
+        const validation = validateImportedPlanJson(saved);
+        if (validation.ok) {
+          return validation.plan;
+        } else {
+          console.warn('Hydration rejected invalid or corrupted localStorage plan:', validation.error);
         }
-        delete parsed.deletedIds;
-        return parsed;
       }
     } catch (e) {
       console.warn('Failed to parse saved plan from localStorage', e);

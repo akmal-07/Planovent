@@ -170,9 +170,9 @@ describe('simulator.ts — Pure 0ms Elasticity Math', () => {
       }
     });
 
-    it('shields user-locked categories during deficit rebalancing', () => {
+    it('shields user-locked categories and flags unresolvableDeficit when high/locked exceed budget', () => {
       const plan = createMockPlan();
-      // Lock venue and decor
+      // Lock venue at 300,000
       plan.budget = plan.budget.map((b) =>
         b.key === 'venue' ? { ...b, isLocked: true, estimated: 300000 } : b
       );
@@ -188,6 +188,29 @@ describe('simulator.ts — Pure 0ms Elasticity Math', () => {
       // Locked venue must not change
       expect(venueResult?.rebalancedSpend).toBe(300000);
       expect(venueResult?.projectedSpend).toBe(300000);
+      // High priority Catering (455k) + Photo (80k) + Locked Venue (300k) = 835,000 > 800,000
+      expect(result.unresolvableDeficit).toBe(35000);
+      expect(result.rebalancedTotal).toBe(835000);
+    });
+
+    it('shields user-locked categories and resolves deficit completely when low/med have capacity', () => {
+      const plan = createMockPlan();
+      // Lock venue at 280,000
+      plan.budget = plan.budget.map((b) =>
+        b.key === 'venue' ? { ...b, isLocked: true, estimated: 280000 } : b
+      );
+
+      // Moderate guest increase: 220 guests
+      const result = runWhatIfSimulation(plan, {
+        guestCount: 220,
+        totalBudget: 800000,
+        styleMultiplier: 1.0,
+        respectLocks: true,
+      });
+
+      const venueResult = result.categories.find((c) => c.key === 'venue');
+      expect(venueResult?.rebalancedSpend).toBe(280000);
+      expect(result.unresolvableDeficit).toBe(0);
       expect(result.rebalancedTotal).toBe(800000);
     });
   });

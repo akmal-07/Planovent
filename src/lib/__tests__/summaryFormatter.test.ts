@@ -161,6 +161,67 @@ describe('summaryFormatter.ts — Pure Family Summary Formatter & JSON Validator
     };
     const badGuests = validateImportedPlanJson(JSON.stringify(negativeGuests));
     expect(badGuests.ok).toBe(false);
-    expect((badGuests as any).error).toContain('"guestCount" must be a positive integer');
+    expect((badGuests as any).error).toContain('positive');
+  });
+
+  it('rejects vendor quotes with string quotedPrice: "abc" cleanly via deep Zod schema', () => {
+    const plan = createMockPlan();
+    const badQuotePlan = {
+      ...plan,
+      vendors: [
+        {
+          ...plan.vendors[0],
+          quotes: [
+            {
+              id: 'q-bad',
+              vendorName: 'Bad Vendor',
+              quotedPrice: 'abc', // Invalid string instead of integer number
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = validateImportedPlanJson(JSON.stringify(badQuotePlan));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('vendors.0.quotes.0.quotedPrice');
+    }
+  });
+
+  it('rejects oversized JSON payloads exceeding 200KB limit immediately', () => {
+    const plan = createMockPlan();
+    // Create an oversized payload > 200,000 characters
+    const hugePadding = 'A'.repeat(210_000);
+    const hugePlan = {
+      ...plan,
+      title: hugePadding,
+    };
+
+    const result = validateImportedPlanJson(JSON.stringify(hugePlan));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exceeds maximum size limit of 200KB');
+    }
+  });
+
+  it('rejects malformed nested tasks with invalid deadline format or missing assignee', () => {
+    const plan = createMockPlan();
+    const badTaskPlan = {
+      ...plan,
+      tasks: [
+        {
+          ...plan.tasks[0],
+          deadline: '14-11-2026', // Invalid non-YYYY-MM-DD format
+        },
+      ],
+    };
+
+    const result = validateImportedPlanJson(JSON.stringify(badTaskPlan));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('tasks.0.deadline');
+      expect(result.error).toContain('YYYY-MM-DD');
+    }
   });
 });

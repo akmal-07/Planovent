@@ -10,6 +10,7 @@ import {
   toMatchKey,
   allocateBudgetBySharePercent,
   cutBudgetByPercentage,
+  absorbDeficitByPriority,
 } from '../calculations';
 import type { BudgetCategory, TaskItem, WeddingPlan } from '../../types/plan';
 
@@ -289,6 +290,56 @@ describe('allocateBudgetBySharePercent() with Largest-Remainder Rounding', () =>
     const values = [allocation.venue, allocation.catering, allocation.decor].sort();
     expect(values).toEqual([33, 33, 34]);
   });
+
+  it('normalizes proportionally when unlocked sharePercent sum is 90 (!= 100)', () => {
+    const totalBudget = 900000;
+    const categories = [
+      { key: 'venue' as const, isLocked: false, lockedSpend: 0, sharePercent: 45 },
+      { key: 'catering' as const, isLocked: false, lockedSpend: 0, sharePercent: 30 },
+      { key: 'decor' as const, isLocked: false, lockedSpend: 0, sharePercent: 15 },
+    ]; // Sum = 90
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+    const sum = allocation.venue + allocation.catering + allocation.decor;
+    expect(sum).toBe(900000);
+    // 45/90 = 50% -> 450,000, 30/90 = 33.33% -> 300,000, 15/90 = 16.67% -> 150,000
+    expect(allocation.venue).toBe(450000);
+    expect(allocation.catering).toBe(300000);
+    expect(allocation.decor).toBe(150000);
+  });
+
+  it('normalizes proportionally when unlocked sharePercent sum is 120 (!= 100)', () => {
+    const totalBudget = 600000;
+    const categories = [
+      { key: 'venue' as const, isLocked: false, lockedSpend: 0, sharePercent: 60 },
+      { key: 'catering' as const, isLocked: false, lockedSpend: 0, sharePercent: 40 },
+      { key: 'decor' as const, isLocked: false, lockedSpend: 0, sharePercent: 20 },
+    ]; // Sum = 120
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+    const sum = allocation.venue + allocation.catering + allocation.decor;
+    expect(sum).toBe(600000);
+    // 60/120 = 50% -> 300,000, 40/120 = 33.33% -> 200,000, 20/120 = 16.67% -> 100,000
+    expect(allocation.venue).toBe(300000);
+    expect(allocation.catering).toBe(200000);
+    expect(allocation.decor).toBe(100000);
+  });
+
+  it('distributes remainingPool equally when all unlocked categories have sharePercent === 0', () => {
+    const totalBudget = 100000;
+    const categories = [
+      { key: 'venue' as const, isLocked: false, lockedSpend: 0, sharePercent: 0 },
+      { key: 'catering' as const, isLocked: false, lockedSpend: 0, sharePercent: 0 },
+      { key: 'decor' as const, isLocked: false, lockedSpend: 0, sharePercent: 0 },
+    ]; // All 0
+
+    const allocation = allocateBudgetBySharePercent(totalBudget, categories);
+    const sum = allocation.venue + allocation.catering + allocation.decor;
+    expect(sum).toBe(100000);
+    // 100000 / 3 = 33333 with 1 remainder allocated via Largest-Remainder
+    const values = [allocation.venue, allocation.catering, allocation.decor].sort();
+    expect(values).toEqual([33333, 33333, 33334]);
+  });
 });
 
 describe('cutBudgetByPercentage() deterministic priority budget cutter', () => {
@@ -392,5 +443,42 @@ describe('cutBudgetByPercentage() deterministic priority budget cutter', () => {
 
     const totalEstimated = reducedPlan.budget.reduce((s, b) => s + b.estimated, 0);
     expect(totalEstimated).toBe(720000);
+  });
+});
+
+describe('absorbDeficitByPriority() shared priority deficit engine', () => {
+  const categories = [
+    { key: 'venue' as const, label: 'Venue', priorityWeight: 'high' as const, spend: 300000, isLocked: true },
+    { key: 'catering' as const, label: 'Catering', priorityWeight: 'high' as const, spend: 250000, isLocked: false },
+    { key: 'decor' as const, label: 'Decor', priorityWeight: 'low' as const, spend: 80000, isLocked: false },
+    { key: 'photo_video' as const, label: 'Photo', priorityWeight: 'high' as const, spend: 70000, isLocked: false },
+    { key: 'entertainment' as const, label: 'DJ', priorityWeight: 'medium' as const, spend: 40000, isLocked: false },
+    { key: 'invites' as const, label: 'Invites', priorityWeight: 'low' as const, spend: 20000, isLocked: false },
+    { key: 'transport' as const, label: 'Fleet', priorityWeight: 'medium' as const, spend: 25000, isLocked: false },
+    { key: 'misc' as const, label: 'Rituals', priorityWeight: 'medium' as const, spend: 15000, isLocked: false },
+  ];
+
+  it('cuts low priority first (up to 40%) before touching medium priority', () => {
+    // Low priority total = 100,000. 40% of low = 40,000.
+    const result = absorbDeficitByPriority(categories, 30000, true);
+
+    expect(result.unresolvableDeficit).toBe(0);
+    expect(result.lowCutTotal).toBe(30000);
+    expect(result.medCutTotal).toBe(0);
+    expect(result.highCutTotal).toBe(0);
+    expect(result.rebalancedSpendByKey.venue).toBe(300000); // Locked
+    expect(result.rebalancedSpendByKey.catering).toBe(250000); // High shielded
+  });
+
+  it('shields high priority completely and returns unresolvableDeficit if deficit exceeds low/med capacity', () => {
+    // Total low = 100k, total med = 80k. Max cut on low/med without touching high is 100k*1.0 + 80k*0.80 = 164,000.
+    // If deficit is 300,000:
+    const result = absorbDeficitByPriority(categories, 300000, true);
+
+    expect(result.unresolvableDeficit).toBeGreaterThan(0);
+    expect(result.highCutTotal).toBe(0);
+    expect(result.rebalancedSpendByKey.venue).toBe(300000); // 100% shielded
+    expect(result.rebalancedSpendByKey.catering).toBe(250000); // 100% shielded
+    expect(result.rebalancedSpendByKey.photo_video).toBe(70000); // 100% shielded
   });
 });

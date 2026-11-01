@@ -1,6 +1,7 @@
 /**
  * Serverless API: /api/refine
- * Refines an existing celebration plan while respecting user-locked items and priority weights.
+ * Refines an existing celebration plan while respecting user-locked items and priority weights,
+ * with per-attempt 12s timeouts.
  */
 
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
@@ -8,11 +9,14 @@ import {
   RefineRequestSchema,
   AiGeneratedPlanSchema,
   geminiPlanResponseSchema,
-} from '../src/schemas/geminiSchema.ts';
+  withTimeout,
+} from './_shared.ts';
 
 // Quota and rate limiting are enforced at the Gemini API key / provider boundary.
 export const maxDuration = 30;
 export const config = { maxDuration: 30 };
+
+const MODEL_TIMEOUT_MS = 12000; // 12 seconds per attempt
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -112,31 +116,39 @@ Refinement Instructions:
     let modelUsed = primaryModel;
 
     try {
-      const response = await ai.models.generateContent({
-        model: primaryModel,
-        contents: refinementContext,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: geminiPlanResponseSchema,
-          temperature: 0.2,
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: primaryModel,
+          contents: refinementContext,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: geminiPlanResponseSchema,
+            temperature: 0.2,
+          },
+        }),
+        MODEL_TIMEOUT_MS,
+        `Primary model (${primaryModel}) refinement timed out after ${MODEL_TIMEOUT_MS}ms`
+      );
       responseText = response.text;
     } catch (primaryError: any) {
-      console.warn(`Primary model (${primaryModel}) failed, retrying once on fast model (${fastModel}):`, primaryError?.message);
+      console.warn(`Primary model (${primaryModel}) failed or timed out, retrying once on fast model (${fastModel}):`, primaryError?.message);
       modelUsed = fastModel;
-      const retryResponse = await ai.models.generateContent({
-        model: fastModel,
-        contents: refinementContext,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: geminiPlanResponseSchema,
-          temperature: 0.2,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        },
-      });
+      const retryResponse = await withTimeout(
+        ai.models.generateContent({
+          model: fastModel,
+          contents: refinementContext,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: geminiPlanResponseSchema,
+            temperature: 0.2,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          },
+        }),
+        MODEL_TIMEOUT_MS,
+        `Fast model (${fastModel}) refinement timed out after ${MODEL_TIMEOUT_MS}ms`
+      );
       responseText = retryResponse.text;
     }
 
@@ -168,7 +180,7 @@ Refinement Instructions:
     console.error('Gemini API refine error:', error);
     return res.status(502).json({
       error: error?.message || 'Upstream Gemini API call failed',
-      code: 'GEMINI_UPSTREAM_ERROR',
+      code: error?.code === 'TIMEOUT' ? 'GEMINI_TIMEOUT' : 'GEMINI_UPSTREAM_ERROR',
     });
   }
 }

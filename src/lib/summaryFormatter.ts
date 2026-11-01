@@ -6,6 +6,7 @@
  * safe, non-destructive import validation for exported .json celebration plans.
  */
 
+import { z } from 'zod';
 import type {
   WeddingPlan,
   TaskItem,
@@ -22,6 +23,114 @@ import {
 } from './calculations';
 import { evaluatePlanRisks } from './riskEngine';
 import { sanitizeTaskDependencies } from './mergeEngine';
+
+const EVENT_FUNCTION_NAMES = [
+  'Haldi',
+  'Mehndi',
+  'Sangeet',
+  'Wedding',
+  'Reception',
+  'General',
+] as const;
+
+export const WeddingPlanImportSchema = z.object({
+  id: z.string().min(1, 'Missing id'),
+  title: z.string().min(1, 'Missing title'),
+  city: z.string().min(1, 'Missing city'),
+  eventStyle: z.string().min(1, 'Missing eventStyle'),
+  guestCount: z.number().int('Guest count must be an integer').positive('Guest count must be positive'),
+  totalBudget: z.number().int('Total budget must be an integer').nonnegative('Total budget must be non-negative'),
+  accessibilityNeeds: z.array(z.string()).default([]),
+  functions: z.array(
+    z.object({
+      name: z.enum(EVENT_FUNCTION_NAMES),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Function date must be YYYY-MM-DD'),
+      time: z.string().optional(),
+    })
+  ),
+  budget: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        key: z.enum(BUDGET_CATEGORY_KEYS),
+        label: z.string().min(1),
+        priorityWeight: z.enum(['high', 'medium', 'low']),
+        estimated: z.number().int('Estimated must be integer').nonnegative(),
+        actual: z.number().int('Actual must be integer').nonnegative().optional(),
+        paid: z.number().int('Paid must be integer').nonnegative(),
+        scalingType: z.enum(['fixed', 'per_guest', 'step']),
+        stepSize: z.number().positive().optional(),
+        stepRate: z.number().positive().optional(),
+        isLocked: z.boolean(),
+        source: z.enum(['user', 'ai']),
+      })
+    )
+    .superRefine((cats, ctx) => {
+      const keys = new Set(cats.map((c) => c.key));
+      const missing = BUDGET_CATEGORY_KEYS.filter((k) => !keys.has(k));
+      if (missing.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Budget is missing required category: "${missing.join('", "')}". Exactly 8 core categories required.`,
+        });
+      }
+    }),
+  tasks: z.array(
+    z.object({
+      id: z.string().min(1),
+      title: z.string().min(1),
+      deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Task deadline must be YYYY-MM-DD'),
+      timeSlot: z.string().optional(),
+      priority: z.enum(['high', 'medium', 'low']),
+      assignee: z.string().min(1, 'Assignee must be specified'),
+      done: z.boolean(),
+      eventFunction: z.enum(EVENT_FUNCTION_NAMES),
+      dependsOnTaskId: z.string().optional(),
+      source: z.enum(['user', 'ai']),
+      isLocked: z.boolean(),
+    })
+  ),
+  vendors: z.array(
+    z.object({
+      id: z.string().min(1),
+      categoryKey: z.enum(BUDGET_CATEGORY_KEYS),
+      type: z.string().min(1),
+      estimatedQuote: z.number().int('Estimated quote must be integer').nonnegative(),
+      status: z.enum(['pending', 'confirmed']),
+      source: z.enum(['user', 'ai']),
+      isLocked: z.boolean(),
+      quotes: z.array(
+        z.object({
+          id: z.string().min(1),
+          vendorName: z.string().min(1),
+          quotedPrice: z.number().int('Quoted price must be integer').nonnegative(),
+          notes: z.string().optional(),
+          isFinalized: z.boolean().optional(),
+        })
+      ),
+    })
+  ),
+  ideas: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string().min(1),
+        description: z.string().min(1),
+        category: z.string().min(1),
+      })
+    )
+    .default([]),
+  tombstones: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        matchKey: z.string().min(1),
+        label: z.string().min(1),
+      })
+    )
+    .default([]),
+  updatedAt: z.string().optional(),
+});
 
 /**
  * Formats a clean, emoji-structured WhatsApp and text brief for family coordination.
@@ -137,14 +246,27 @@ export function formatFamilySummaryText(
 }
 
 /**
- * Validates and sanitizes raw JSON into a typed WeddingPlan.
- * Rejects corrupt structures and repairs circular dependencies via sanitizeTaskDependencies.
+ * Maximum import payload size cap (200KB / 200,000 characters).
+ */
+export const MAX_IMPORT_JSON_CHARS = 200_000;
+
+/**
+ * Validates and sanitizes raw JSON into a typed WeddingPlan using deep Zod validation.
+ * Enforces a 200,000 char size limit, rejects malformed schemas (e.g., quotedPrice: "abc"),
+ * and repairs circular dependencies via sanitizeTaskDependencies.
  */
 export function validateImportedPlanJson(
   rawJson: string
 ): { ok: true; plan: WeddingPlan } | { ok: false; error: string } {
   if (!rawJson || typeof rawJson !== 'string') {
     return { ok: false, error: 'Empty or invalid JSON string provided.' };
+  }
+
+  if (rawJson.length > MAX_IMPORT_JSON_CHARS) {
+    return {
+      ok: false,
+      error: `Import payload exceeds maximum size limit of 200KB (${rawJson.length.toLocaleString('en-IN')} characters).`,
+    };
   }
 
   let data: any;
@@ -158,166 +280,52 @@ export function validateImportedPlanJson(
     return { ok: false, error: 'Imported payload must be a JSON object.' };
   }
 
-  // Validate top-level required string properties
-  if (!data.id || typeof data.id !== 'string') {
-    return { ok: false, error: 'Missing or invalid "id" field.' };
-  }
-  if (!data.title || typeof data.title !== 'string') {
-    return { ok: false, error: 'Missing or invalid "title" field.' };
-  }
-  if (!data.city || typeof data.city !== 'string') {
-    return { ok: false, error: 'Missing or invalid "city" field.' };
-  }
-  if (!data.eventStyle || typeof data.eventStyle !== 'string') {
-    return { ok: false, error: 'Missing or invalid "eventStyle" field.' };
-  }
-
-  // Validate numeric fields
-  if (typeof data.guestCount !== 'number' || data.guestCount < 1) {
-    return { ok: false, error: '"guestCount" must be a positive integer.' };
-  }
-  if (typeof data.totalBudget !== 'number' || data.totalBudget < 0) {
-    return { ok: false, error: '"totalBudget" must be a non-negative integer.' };
-  }
-
-  // Validate functions array
-  if (!Array.isArray(data.functions)) {
-    return { ok: false, error: '"functions" must be an array.' };
-  }
-  for (const fn of data.functions) {
-    if (!fn || typeof fn !== 'object' || !fn.name || !fn.date) {
-      return { ok: false, error: 'Each function must have a "name" and "date" (YYYY-MM-DD).' };
-    }
-  }
-
-  // Validate 8 Core Budget Categories
-  if (!Array.isArray(data.budget)) {
-    return { ok: false, error: '"budget" must be an array of categories.' };
-  }
-
-  const budgetKeys = new Set(data.budget.map((b: any) => b?.key));
-  for (const requiredKey of BUDGET_CATEGORY_KEYS) {
-    if (!budgetKeys.has(requiredKey)) {
-      return {
-        ok: false,
-        error: `Budget is missing required category: "${requiredKey}". Exactly 8 core categories required.`,
-      };
-    }
-  }
-
-  const validBudget: BudgetCategory[] = [];
-  for (const b of data.budget) {
-    if (!b || typeof b !== 'object') {
-      return { ok: false, error: 'Invalid budget category object.' };
-    }
-    if (!BUDGET_CATEGORY_KEYS.includes(b.key)) {
-      return { ok: false, error: `Invalid budget category key: "${b.key}".` };
-    }
-    const estimated = Math.max(0, Math.round(Number(b.estimated) || 0));
-    const paid = Math.max(0, Math.round(Number(b.paid) || 0));
-    const actual = b.actual !== undefined && b.actual !== null
-      ? Math.max(0, Math.round(Number(b.actual) || 0))
-      : undefined;
-
-    validBudget.push({
-      id: String(b.id || `cat-${b.key}`),
-      key: b.key,
-      label: String(b.label || b.key),
-      priorityWeight: ['high', 'medium', 'low'].includes(b.priorityWeight) ? b.priorityWeight : 'medium',
-      estimated,
-      actual,
-      paid,
-      scalingType: ['per_guest', 'step', 'fixed'].includes(b.scalingType) ? b.scalingType : 'fixed',
-      stepSize: b.stepSize ? Number(b.stepSize) : undefined,
-      stepRate: b.stepRate ? Number(b.stepRate) : undefined,
-      isLocked: Boolean(b.isLocked),
-      source: b.source === 'ai' ? 'ai' : 'user',
-    });
-  }
-
-  // Validate & sanitize tasks (breaking circular dependencies)
-  const rawTasks = Array.isArray(data.tasks) ? data.tasks : [];
-  const validTasks: TaskItem[] = [];
-  for (const t of rawTasks) {
-    if (!t || typeof t !== 'object' || !t.id || !t.title || !t.deadline) continue;
-    validTasks.push({
-      id: String(t.id),
-      title: String(t.title),
-      deadline: String(t.deadline),
-      timeSlot: t.timeSlot ? String(t.timeSlot) : undefined,
-      priority: ['high', 'medium', 'low'].includes(t.priority) ? t.priority : 'medium',
-      assignee: String(t.assignee || 'Unassigned'),
-      done: Boolean(t.done),
-      eventFunction: t.eventFunction || 'General',
-      dependsOnTaskId: t.dependsOnTaskId ? String(t.dependsOnTaskId) : undefined,
-      source: t.source === 'ai' ? 'ai' : 'user',
-      isLocked: Boolean(t.isLocked),
-    });
-  }
-  const sanitizedTasks = sanitizeTaskDependencies(validTasks);
-
-  // Validate Vendors
-  const rawVendors = Array.isArray(data.vendors) ? data.vendors : [];
-  const validVendors: VendorSlot[] = [];
-  for (const v of rawVendors) {
-    if (!v || typeof v !== 'object' || !v.id || !v.type) continue;
-    const quotes = Array.isArray(v.quotes) ? v.quotes : [];
-    validVendors.push({
-      id: String(v.id),
-      categoryKey: v.categoryKey || 'misc',
-      type: String(v.type),
-      estimatedQuote: Math.max(0, Math.round(Number(v.estimatedQuote) || 0)),
-      status: v.status === 'confirmed' ? 'confirmed' : 'pending',
-      source: v.source === 'ai' ? 'ai' : 'user',
-      isLocked: Boolean(v.isLocked),
-      quotes: quotes.map((q: any) => ({
-        id: String(q.id || `quote-${Date.now()}`),
-        vendorName: String(q.vendorName || 'Vendor'),
-        quotedPrice: Math.max(0, Math.round(Number(q.quotedPrice) || 0)),
-        notes: q.notes ? String(q.notes) : undefined,
-        isFinalized: Boolean(q.isFinalized),
-      })),
-    });
-  }
-
-  // Validate structured tombstones (migrating legacy strings if necessary)
-  const validTombstones: Tombstone[] = [];
+  // Pre-process legacy tombstones if strings were passed
   if (Array.isArray(data.tombstones)) {
-    for (const item of data.tombstones) {
-      if (!item) continue;
+    data.tombstones = data.tombstones.map((item: any) => {
       if (typeof item === 'string') {
-        validTombstones.push({
+        return {
           id: item,
           matchKey: toMatchKey(item),
           label: item,
-        });
-      } else if (typeof item === 'object' && item.id) {
+        };
+      }
+      if (typeof item === 'object' && item !== null && item.id) {
         const label = String(item.label || item.id);
-        validTombstones.push({
+        return {
           id: String(item.id),
           matchKey: item.matchKey ? String(item.matchKey) : toMatchKey(label),
           label,
-        });
+        };
       }
-    }
+      return item;
+    });
   }
 
-  const sanitizedPlan: WeddingPlan = {
-    id: data.id,
-    title: data.title,
-    city: data.city,
-    eventStyle: data.eventStyle,
-    guestCount: Math.max(1, Math.round(data.guestCount)),
-    totalBudget: Math.max(0, Math.round(data.totalBudget)),
-    accessibilityNeeds: Array.isArray(data.accessibilityNeeds) ? data.accessibilityNeeds.map(String) : [],
-    functions: data.functions,
-    budget: validBudget,
+  const validation = WeddingPlanImportSchema.safeParse(data);
+  if (!validation.success) {
+    const firstIssue = validation.error.issues[0];
+    const pathStr = firstIssue.path.length > 0 ? ` at "${firstIssue.path.join('.')}"` : '';
+    return {
+      ok: false,
+      error: `Validation error${pathStr}: ${firstIssue.message}`,
+    };
+  }
+
+  const parsedPlan = validation.data;
+
+  // Sanitize task dependencies to break DAG cycles
+  const sanitizedTasks = sanitizeTaskDependencies(parsedPlan.tasks as TaskItem[]);
+
+  const finalPlan: WeddingPlan = {
+    ...parsedPlan,
+    budget: parsedPlan.budget as BudgetCategory[],
     tasks: sanitizedTasks,
-    vendors: validVendors,
-    ideas: Array.isArray(data.ideas) ? data.ideas : [],
-    tombstones: validTombstones,
-    updatedAt: new Date().toISOString(),
+    vendors: parsedPlan.vendors as VendorSlot[],
+    ideas: parsedPlan.ideas,
+    tombstones: parsedPlan.tombstones as Tombstone[],
+    updatedAt: parsedPlan.updatedAt || new Date().toISOString(),
   };
 
-  return { ok: true, plan: sanitizedPlan };
+  return { ok: true, plan: finalPlan };
 }

@@ -11,6 +11,7 @@ import {
   TrendingDown,
   RotateCcw,
   Check,
+  AlertTriangle,
 } from 'lucide-react';
 import type { WeddingPlan, WhatIfSimulationResult, WhatIfSimulationParams } from '../../types/plan';
 import { formatINR, formatCompactINR } from '../../lib/calculations';
@@ -343,6 +344,21 @@ export const WhatIfSimulatorPanel: React.FC<WhatIfSimulatorPanelProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Unresolvable Deficit Warning Banner */}
+        {simulation.unresolvableDeficit > 0 && (
+          <div className="p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+            <div>
+              <strong className="font-semibold block text-amber-300">
+                ⚠️ Mathematically Unresolvable Deficit: {formatINR(simulation.unresolvableDeficit)}
+              </strong>
+              <span>
+                Non-negotiable High-Priority categories (Catering, Photography) and locked allocations are strictly shielded from cuts. To balance the celebration budget, decrease the target guest count or increase total budget.
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Apply Scenario Buttons */}
         <div className="flex flex-wrap items-center justify-end gap-3 pt-2">

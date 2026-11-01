@@ -173,6 +173,7 @@ export interface WhatIfSimulationResult {
   rebalancedTotal: number;
   categories: WhatIfCategoryResult[];
   deficit: number;
+  unresolvableDeficit: number; // Deficit that cannot be resolved without cutting high-priority or locked categories
   isOverBudget: boolean;
   tradeOffFacts: string[];
 }

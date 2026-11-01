@@ -119,7 +119,7 @@ export const FamilySummaryModal: React.FC<FamilySummaryModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="family-summary-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn print:hidden"
     >
       <div className="relative w-full max-w-3xl glass-panel rounded-2xl border border-stone-800 bg-stone-900 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}

@@ -12,7 +12,7 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                      REACTIVE PRESENTATION LAYER                       │
-│    React 19 • Tailwind CSS • Lucide Icons • WCAG AA Landmarks & ARIA    │
+│    React 19 • Tailwind CSS • Lucide Icons • Semantic Landmarks & ARIA  │
 │    useWeddingPlan Hook • WhatIfWorkspace • RiskRadar • FamilySummary   │
 └─────────────────────────────────┬──────────────────────────────────────┘
                                   │ Actions & User Events
@@ -27,16 +27,16 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 │ • simulator.ts      → 0ms Elasticity (per_guest, step, fixed), Shields │
 │ • riskEngine.ts     → 6 Deterministic Rules, Health Score (0-100)      │
 │ • mergeEngine.ts    → Non-Destructive Ingestion, DFS Cycle Breaker     │
-│ • summaryFormatter.ts → WhatsApp Text Brief, JSON Import Validator     │
+│ • summaryFormatter.ts → Deep Zod Validation (200KB), WhatsApp Brief    │
 └─────────────────────────────────┬──────────────────────────────────────┘
                                   │ Validated Prompts & Plan Context
                                   │ Zod Validated Schemas
                                   ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   SERVERLESS AI & SCHEMA BOUNDARY                      │
-│                  (/api/*.ts & src/schemas/*.ts)                        │
+│                  (/api/*.ts & api/_shared.ts)                          │
 │                                                                        │
-│ • /api/generate     → GEMINI_MODEL primary (₹ integer % allocations)   │
+│ • /api/generate     → GEMINI_MODEL primary (12s per-attempt timeout)   │
 │ • /api/refine       → Respects isLocked, quotes, and matchKey tombstones│
 │ • /api/narrate      → GEMINI_MODEL_FAST (ThinkingLevel.LOW) commentary  │
 │ • Dual-Model Route  → 1x automatic retry on fast model on 429/5xx      │
@@ -50,18 +50,19 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 
 | Rubric Evaluation Dimension | Implementation in Celebration Planner |
 | :--- | :--- |
-| **Problem Statement Alignment** | Benchmark **₹8,00,000 / 200 Guests / 4-Month** Hyderabad celebration preset. 5 distinct multi-day functions (`Haldi`, `Mehndi`, `Sangeet`, `Wedding Ceremony`, `Reception`). Multi-attribute prioritization (`high`, `medium`, `low`). |
+| **Problem Statement Alignment** | Benchmark **₹8,00,000 / 200 Guests / 4-Month** Hyderabad celebration preset. 5 distinct multi-day functions (`Haldi`, `Mehndi`, `Sangeet`, `Wedding Ceremony`, `Reception`). Multi-attribute prioritization (`high`, `medium`, `low`). Dynamic relative dates (`+120` to `+123` days) prevent stale presets. |
 | **Budget Transparency** | Strict 3-Number Formula: $\text{Effective} = \text{actual} \mathbin{??} \text{estimated}$. Clear tracking of committed spend, paid amounts, balance due, and buffer cushion in `en-IN` formatting (`formatINR`, `formatCompactINR`). |
-| **Priority-Aware Trade-Offs** | When budget cuts or elasticity deficits are applied, flexible `'low'` priority categories (Decor, Invites) absorb reductions first, while non-negotiable `'high'` priority categories (Catering, Photography) are shielded. |
-| **Real Vendor Comparator** | Archetype-based slots comparing real user quotes. Finalizing a vendor quote synchronizes confirmed pricing into the category's `actual` spend while strictly forbidding the LLM from inventing fake business names. |
+| **Priority-Aware Trade-Offs** | When budget cuts or elasticity deficits are applied, flexible `'low'` priority categories (Decor, Invites) absorb reductions first, while non-negotiable `'high'` priority categories (Catering, Photography) are shielded. Unresolvable deficits are flagged when High/Locked exceed target. |
+| **Real Vendor Comparator** | Archetype-based slots comparing real user quotes. Side-by-side quote comparison immediately visible on initial load. Finalizing a vendor quote synchronizes confirmed pricing into the category's `actual` spend while strictly forbidding the LLM from inventing fake business names. |
 | **What-If Elasticity Modeling** | Instant 0ms client-side math for guest counts (50–800), target budgets (₹2L–₹50L), and celebration style tiers (`0.85x`, `1.0x`, `1.25x`) with Hamilton–Hare Largest-Remainder integer rupee allocation. |
-| **Operational Risk Radar** | 6 deterministic diagnostic rules evaluating over-budget conditions, category overruns (>15%), overdue milestones, blocked DAG tasks, unassigned leads, and pending vendors with 1-click action fixes. |
-| **Family Collaboration** | 1-click WhatsApp plain-text brief copying, printable executive summary sheets (`@media print`), and schema-validated JSON plan backups for cross-device sharing. |
-| **Code Quality & Testing** | **62 Vitest unit tests** passing with 100% pass rate. Pure TypeScript engine in `src/lib/`. Strict WCAG AA accessibility compliance across all interactive controls. |
+| **Category Scaling Heuristics** | `per_guest` (linear guest ratio), `step` (discrete linear step-interval heuristic: `Math.trunc(delta / stepSize)`), and `fixed` (invariant to guests). |
+| **Operational Risk Radar** | 6 deterministic diagnostic rules evaluating over-budget conditions, category overruns (>15%), overdue milestones, blocked DAG tasks, unassigned leads, and pending vendors with 1-click action fixes. Opens with balanced 75–85 ("Needs Attention") health score. |
+| **Family Collaboration** | 1-click WhatsApp plain-text brief copying, dedicated unclipped multi-page executive printable layout (`@media print`), and schema-validated JSON plan backups (<200KB) for cross-device sharing. |
+| **Code Quality & Testing** | **71 Vitest unit tests** passing with 100% pass rate. Pure TypeScript engine in `src/lib/`. Built with semantic HTML landmarks, keyboard navigation, and explicit ARIA labels (`aria-label`, `aria-pressed`, `role="dialog"`). |
 
 ---
 
-## 3. Milestone Prompt Evolution (Bits 1 through 4)
+## 3. Milestone Prompt Evolution (Bits 1 through 4.5)
 
 ### Bit 1: Deterministic Engine & Presentation Foundations
 - **Objective**: Establish the core domain model in `src/types/plan.ts`, pure calculation engine in `src/lib/calculations.ts`, and accessible component tree.
@@ -87,11 +88,19 @@ To prevent architectural drift and eliminate hallucinations, Celebration Planner
 - **Key Decision 2 (Fast Model Narration)**: `/api/narrate` strictly uses `GEMINI_MODEL_FAST` (`gemini-3.5-flash-lite`) with `ThinkingLevel.LOW` to produce 2-sentence executive trade-off summaries based exclusively on the computed rupee deltas.
 - **Key Decision 3 (Deterministic Risk Radar)**: 6 automated rules compute a bounded Health Score (0–100) and provide 1-click fixes (`+7 Days Deadline`, `Complete Prerequisite`, inline `Assign Lead`, `1-Click Priority Rebalance`).
 
-### Bit 4: Family Sharing, JSON Export/Import, Print Stylesheet, and Documentation
+### Bit 4: Family Sharing, JSON Export/Import, Print Stylesheet, and Alignment
 - **Objective**: Enable real family collaboration, backup portability, and submission documentation.
 - **Key Decision 1 (WhatsApp Brief Formatter)**: Pure, unit-tested `formatFamilySummaryText()` creates an emoji-structured, high-signal brief ready to paste in family groups.
-- **Key Decision 2 (Safe Plan Backup Import)**: `validateImportedPlanJson()` validates uploaded `.json` files, ensuring all 8 categories exist and breaking any imported task dependency cycles.
-- **Key Decision 3 (Quota Protection)**: Added an explicit `autoNarrate` toggle in `WhatIfWorkspace.tsx` (defaults to OFF), allowing users to drag sliders freely without burning API quotas.
+- **Key Decision 2 (Quota Protection)**: Added an explicit `autoNarrate` toggle in `WhatIfWorkspace.tsx` (defaults to OFF), allowing users to drag sliders freely without burning API quotas.
+
+### Bit 4.5: Pre-Deploy Production Hardening
+- **Objective**: Full Vercel serverless compatibility, per-attempt timeouts, deep Zod import validation, unified priority deficit math, and unclipped printing.
+- **Key Decision 1 (Vercel Serverless Resolution)**: Co-located shared schemas and timeout helpers in `api/_shared.ts` to eliminate `ERR_MODULE_NOT_FOUND` across serverless bundlers, paired with `vercel.json` (`maxDuration: 30`).
+- **Key Decision 2 (12s Per-Attempt Timeouts)**: Wrapped each model call in a 12s timeout (`withTimeout`), guaranteeing primary + fast fallback completes within 24s.
+- **Key Decision 3 (Deep Zod Validation & 200KB Cap)**: Added `WeddingPlanImportSchema` enforcing 200KB limits, integer amounts, valid dates, and all 8 categories during JSON import and `localStorage` hydration.
+- **Key Decision 4 (Unified Deficit Math & Unresolvable Deficit)**: Unified `cutBudgetByPercentage` and `runWhatIfSimulation` via `absorbDeficitByPriority`. Mathematically unresolvable deficits surface an explicit warning banner while strictly protecting High-Priority categories.
+- **Key Decision 5 (Relative Preset Dates & Initial Radar Score)**: Dynamic relative dates (`getRelativeDate(offset)`) ensure the 4-month preset never goes stale, opening with realistic side-by-side quotes and a 75–85 ("Needs Attention") health score.
+- **Key Decision 6 (Unclipped Print Layout)**: Added a top-level `<div className="hidden print:block">` executive layout, hiding the interactive shell and modal backdrops on print to eliminate clipping.
 
 ---
 
@@ -174,19 +183,19 @@ export const geminiPlanResponseSchema = {
 
 ---
 
-## 6. Verification Summary (62 Vitest Tests Passing)
+## 6. Verification Summary (71 Vitest Tests Passing)
 
 ```
 Test Files  6 passed (6)
-     Tests  62 passed (62)
-  Duration  2.04s
+     Tests  71 passed (71)
+  Duration  1.64s
 
-✓ src/lib/__tests__/calculations.test.ts (20 tests)
-✓ src/lib/__tests__/mergeEngine.test.ts (10 tests)
+✓ src/lib/__tests__/calculations.test.ts (25 tests)
 ✓ src/lib/__tests__/schema.test.ts (11 tests)
-✓ src/lib/__tests__/simulator.test.ts (8 tests)
+✓ src/lib/__tests__/mergeEngine.test.ts (10 tests)
+✓ src/lib/__tests__/simulator.test.ts (9 tests)
+✓ src/lib/__tests__/summaryFormatter.test.ts (9 tests)
 ✓ src/lib/__tests__/riskEngine.test.ts (7 tests)
-✓ src/lib/__tests__/summaryFormatter.test.ts (6 tests)
 ```
 
 Built with 0 TypeScript errors (`tsc -b`) and 0 Vite bundling warnings.

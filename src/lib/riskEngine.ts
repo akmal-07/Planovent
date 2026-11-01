@@ -90,7 +90,7 @@ export function evaluatePlanRisks(
       targetId: task.id,
     });
   }
-  scorePenalties += Math.min(35, overdueTasks.length * 15);
+  scorePenalties += Math.min(30, overdueTasks.length * 10);
 
   // Rule 4: Blocked Tasks with incomplete prerequisites (warning/critical)
   const blockedTasks = plan.tasks.filter((t) => !t.done && isTaskBlocked(t, plan.tasks));
@@ -108,7 +108,7 @@ export function evaluatePlanRisks(
       targetId: task.dependsOnTaskId,
     });
   }
-  scorePenalties += Math.min(30, blockedTasks.length * 10);
+  scorePenalties += Math.min(20, blockedTasks.length * 5);
 
   // Rule 5: Unassigned Incomplete Tasks (warning)
   const unassignedTasks = plan.tasks.filter(
@@ -155,7 +155,7 @@ export function evaluatePlanRisks(
         actionLabel: 'Jump to Vendors',
         targetId: vendor.id,
       });
-      scorePenalties += isCritical ? 15 : 10;
+      scorePenalties += isCritical ? 10 : 5;
     }
   }
 
@@ -168,7 +168,7 @@ export function evaluatePlanRisks(
 
   if (score >= 80 && criticalCount === 0) {
     status = 'Healthy';
-  } else if (score >= 50 && criticalCount <= 1) {
+  } else if (score >= 50 && criticalCount <= 2) {
     status = 'Needs Attention';
   } else {
     status = 'At Risk';
