@@ -7,6 +7,8 @@ interface AiNarrationCardProps {
   modelUsed: string | null;
   isLoading: boolean;
   error: string | null;
+  autoNarrate: boolean;
+  onToggleAutoNarrate: () => void;
   onRefresh: () => void;
 }
 
@@ -16,6 +18,8 @@ export const AiNarrationCard: React.FC<AiNarrationCardProps> = ({
   modelUsed,
   isLoading,
   error,
+  autoNarrate,
+  onToggleAutoNarrate,
   onRefresh,
 }) => {
   return (
@@ -37,21 +41,48 @@ export const AiNarrationCard: React.FC<AiNarrationCardProps> = ({
               )}
             </div>
             <p className="text-[11px] text-stone-400">
-              Executive trade-off analysis computed by fast model
+              Executive trade-off analysis computed by fast model ({modelUsed || 'GEMINI_MODEL_FAST'})
             </p>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={isLoading}
-          aria-label="Refresh AI Trade-Off Commentary"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-stone-300 hover:text-gold-300 hover:bg-stone-800/80 border border-stone-700/80 transition-all disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-gold-400' : ''}`} aria-hidden="true" />
-          <span>{isLoading ? 'Analyzing...' : 'Ask AI to Explain'}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Quota-protecting Auto-Narrate toggle */}
+          <button
+            type="button"
+            onClick={onToggleAutoNarrate}
+            aria-pressed={autoNarrate}
+            aria-label="Toggle auto-narration on slider change"
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-all ${
+              autoNarrate
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                : 'bg-stone-950/80 text-stone-400 border-stone-800 hover:text-stone-300'
+            }`}
+            title={
+              autoNarrate
+                ? 'Auto-narration is active (debounced). May consume quota on slider drag.'
+                : 'Auto-narration is OFF (Quota protected). Math updates at 0ms; click button to explain.'
+            }
+          >
+            <div
+              className={`w-2 h-2 rounded-full ${
+                autoNarrate ? 'bg-amber-400 animate-pulse' : 'bg-stone-600'
+              }`}
+            />
+            <span>{autoNarrate ? 'Auto-AI: ON' : 'Auto-AI: OFF (Quota Safe)'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            aria-label="Explain Trade-Offs with AI"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gold-500 hover:bg-gold-400 text-stone-950 transition-all shadow-sm disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            <span>{isLoading ? 'Analyzing...' : 'Explain Trade-Offs with AI'}</span>
+          </button>
+        </div>
       </div>
 
       {isLoading && !commentary && (

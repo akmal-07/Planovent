@@ -53,3 +53,60 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(168, 162, 158, 0.8);
 }
+
+/* Print / Save as PDF Stylesheet */
+@media print {
+  @page {
+    margin: 1.2cm;
+    size: A4 portrait;
+  }
+
+  body {
+    background-color: #ffffff !important;
+    color: #1c1917 !important;
+    font-size: 10pt;
+  }
+
+  header,
+  nav,
+  footer,
+  [role="dialog"],
+  button,
+  input,
+  select,
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .glass-panel,
+  .glass-card {
+    background: #ffffff !important;
+    border: 1px solid #e7e5e4 !important;
+    box-shadow: none !important;
+    color: #1c1917 !important;
+    backdrop-filter: none !important;
+  }
+
+  h1, h2, h3, h4, strong {
+    color: #0c0a09 !important;
+  }
+
+  p, span, td, th {
+    color: #292524 !important;
+  }
+
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  th, td {
+    border: 1px solid #e7e5e4 !important;
+    padding: 4px 6px !important;
+  }
+}
+

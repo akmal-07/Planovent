@@ -1,5 +1,6 @@
 {
-  "name": "planovent",
+  "name": "celebration-planner",
+  "description": "Celebration Planner — AI-Assisted Wedding & Event Planner",
   "private": true,
   "version": "0.0.0",
   "type": "module",

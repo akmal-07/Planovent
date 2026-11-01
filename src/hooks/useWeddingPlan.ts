@@ -616,6 +616,19 @@ export function useWeddingPlan() {
     [clearSnapshot]
   );
 
+  // Import Full Plan from Validated Backup JSON (Transactional snapshot saved for Undo)
+  const importPlan = useCallback(
+    (importedPlan: WeddingPlan) => {
+      createSnapshot();
+      setPlan({
+        ...importedPlan,
+        updatedAt: new Date().toISOString(),
+      });
+      setAiSummary(`Imported celebration plan: "${importedPlan.title}".`);
+    },
+    [createSnapshot]
+  );
+
   // AI Operation 1: Generate New Plan via Serverless /api/generate with 25s timeout
   const generateAiPlan = useCallback(
     async (userPrompt: string, context?: { city?: string; guestCount?: number; totalBudget?: number }): Promise<boolean> => {
@@ -744,6 +757,7 @@ export function useWeddingPlan() {
     finalizeVendorQuote,
     deleteVendorQuote,
     convertIdeaToTask,
+    importPlan,
     // What-If & Risk Radar Operations
     applyWhatIfScenario,
     extendTaskDeadline,

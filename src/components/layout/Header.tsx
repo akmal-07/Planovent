@@ -1,5 +1,15 @@
 import React from 'react';
-import { Sparkles, RotateCcw, RefreshCw, Undo2, Calendar, MapPin, IndianRupee, HeartHandshake } from 'lucide-react';
+import {
+  Sparkles,
+  RotateCcw,
+  RefreshCw,
+  Undo2,
+  Calendar,
+  MapPin,
+  IndianRupee,
+  HeartHandshake,
+  Share2,
+} from 'lucide-react';
 import type { WeddingPlan } from '../../types/plan';
 import { formatCompactINR, calculateDaysRemaining } from '../../lib/calculations';
 
@@ -10,6 +20,7 @@ interface HeaderProps {
   onReset: () => void;
   onUndo: () => void;
   onOpenSetup: () => void;
+  onOpenShare: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
   onReset,
   onUndo,
   onOpenSetup,
+  onOpenShare,
 }) => {
   const primaryDate = plan.functions[0]?.date || new Date().toISOString().split('T')[0];
   const daysRemaining = calculateDaysRemaining(primaryDate);
@@ -35,8 +47,13 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             </div>
             <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gold-400">
+                  Celebration Planner • AI Event Architecture
+                </span>
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-serif font-bold text-stone-100 tracking-tight truncate">
+                <h1 className="text-lg sm:text-xl font-serif font-bold text-stone-100 tracking-tight truncate">
                   {plan.title}
                 </h1>
                 {plan.id === 'benchmark-hyderabad-8L' && (
@@ -79,6 +96,18 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="w-8 h-8 rounded-lg bg-stone-800 flex items-center justify-center text-stone-300 group-hover:text-gold-300 transition-colors">
                 <IndianRupee className="w-4 h-4" aria-hidden="true" />
               </div>
+            </button>
+
+            {/* Share / Export Summary Button */}
+            <button
+              onClick={onOpenShare}
+              aria-label="Share and export celebration summary, WhatsApp brief, or JSON backup"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gold-500/15 text-gold-300 border border-gold-500/30 hover:bg-gold-500/25 transition-all shadow-sm"
+              title="Share family WhatsApp brief, print PDF, or export/import plan"
+            >
+              <Share2 className="w-3.5 h-3.5 text-gold-400" aria-hidden="true" />
+              <span className="hidden sm:inline">Share / Export</span>
+              <span className="sm:hidden">Share</span>
             </button>
 
             {/* Undo Snapshot Button */}

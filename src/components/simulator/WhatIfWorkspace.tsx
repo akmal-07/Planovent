@@ -61,6 +61,7 @@ export const WhatIfWorkspace: React.FC<WhatIfWorkspaceProps> = ({
   const [modelUsed, setModelUsed] = useState<string | null>(null);
   const [isNarrating, setIsNarrating] = useState<boolean>(false);
   const [narrateError, setNarrateError] = useState<string | null>(null);
+  const [autoNarrate, setAutoNarrate] = useState<boolean>(false); // Defaults to OFF to protect free-tier quota
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<any>(null);
@@ -131,8 +132,10 @@ export const WhatIfWorkspace: React.FC<WhatIfWorkspaceProps> = ({
     }
   }, [params, simulation, healthEvaluation.risks]);
 
-  // Debounce (800ms) automatic trigger when simulation parameters change
+  // Debounce (800ms) automatic trigger ONLY when user explicitly toggles autoNarrate ON
   useEffect(() => {
+    if (!autoNarrate) return;
+
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -146,7 +149,7 @@ export const WhatIfWorkspace: React.FC<WhatIfWorkspaceProps> = ({
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [params.guestCount, params.totalBudget, params.styleMultiplier, params.respectLocks, fetchNarration]);
+  }, [autoNarrate, params.guestCount, params.totalBudget, params.styleMultiplier, params.respectLocks, fetchNarration]);
 
   return (
     <div className="space-y-6">
@@ -222,6 +225,8 @@ export const WhatIfWorkspace: React.FC<WhatIfWorkspaceProps> = ({
         modelUsed={modelUsed}
         isLoading={isNarrating}
         error={narrateError}
+        autoNarrate={autoNarrate}
+        onToggleAutoNarrate={() => setAutoNarrate((prev) => !prev)}
         onRefresh={fetchNarration}
       />
 
