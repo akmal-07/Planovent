@@ -7,13 +7,14 @@ import { BudgetSummaryCards } from './components/budget/BudgetSummaryCards';
 import { BudgetTable } from './components/budget/BudgetTable';
 import { TaskChecklist } from './components/timeline/TaskChecklist';
 import { VendorGrid } from './components/vendors/VendorGrid';
-import { WhatIfPreview } from './components/simulator/WhatIfPreview';
+import { WhatIfWorkspace } from './components/simulator/WhatIfWorkspace';
 import { AiCopilotBar } from './components/ai/AiCopilotBar';
 
 export const App: React.FC = () => {
   const {
     plan,
     summary,
+    healthEvaluation,
     hasSnapshot,
     isAiLoading,
     aiError,
@@ -35,6 +36,10 @@ export const App: React.FC = () => {
     finalizeVendorQuote,
     deleteVendorQuote,
     convertIdeaToTask,
+    applyWhatIfScenario,
+    extendTaskDeadline,
+    assignTaskOwner,
+    completeTaskPrerequisite,
     generateAiPlan,
     refineAiPlan,
     undoLastAiChange,
@@ -62,6 +67,7 @@ export const App: React.FC = () => {
         onTabChange={setActiveTab}
         taskCount={plan.tasks.length}
         vendorSlotCount={plan.vendors.length}
+        riskCount={healthEvaluation.risks.length}
       />
 
       {/* 3. Main Content Landmark */}
@@ -126,10 +132,18 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 4: What-If & Risk Radar Preview */}
+        {/* Tab 4: What-If Elasticity Simulator & Risk Radar */}
         {activeTab === 'simulator' && (
           <div role="tabpanel" id="panel-simulator" aria-labelledby="tab-simulator" className="animate-fadeIn">
-            <WhatIfPreview plan={plan} summary={summary} />
+            <WhatIfWorkspace
+              plan={plan}
+              healthEvaluation={healthEvaluation}
+              onApplyScenario={(mode, sim) => applyWhatIfScenario(mode, sim)}
+              onExtendDeadline={(taskId, days) => extendTaskDeadline(taskId, days)}
+              onCompletePrerequisite={(taskId) => completeTaskPrerequisite(taskId)}
+              onAssignOwner={(taskId, assignee) => assignTaskOwner(taskId, assignee)}
+              onJumpToVendors={() => setActiveTab('vendors')}
+            />
           </div>
         )}
       </main>

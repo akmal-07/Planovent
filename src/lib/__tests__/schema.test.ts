@@ -279,4 +279,101 @@ describe('Zod Boundary Tests (AiGeneratedPlanSchema & Schemas)', () => {
     process.env.GEMINI_MODEL = origModel;
     process.env.GEMINI_MODEL_FAST = origFast;
   });
+
+  describe('/api/narrate Fast-Model Handler', () => {
+    const validNarratePayload = {
+      guestCount: 250,
+      totalBudget: 800000,
+      styleMultiplier: 1.0,
+      projectedDelta: 60000,
+      isOverBudget: true,
+      rebalancedCategories: [
+        {
+          key: 'venue',
+          label: 'Venue',
+          priorityWeight: 'medium',
+          currentSpend: 280000,
+          projectedSpend: 280000,
+          rebalancedSpend: 260000,
+          delta: -20000,
+          isLocked: false,
+        },
+        {
+          key: 'catering',
+          label: 'Catering',
+          priorityWeight: 'high',
+          currentSpend: 260000,
+          projectedSpend: 325000,
+          rebalancedSpend: 325000,
+          delta: 65000,
+          isLocked: true,
+        },
+      ],
+      topRisks: [
+        {
+          id: 'risk-1',
+          rule: 'plan_over_budget',
+          severity: 'critical' as const,
+          title: 'Plan Over-Budget',
+          description: 'Deficit detected.',
+        },
+      ],
+      tradeOffFacts: ['Preserved locked Catering intact.', 'Reduced low-priority categories.'],
+    };
+
+    it('requires GEMINI_MODEL_FAST in environment and returns 500 MISSING_MODEL_CONFIG if absent', async () => {
+      const origKey = process.env.GEMINI_API_KEY;
+      const origFast = process.env.GEMINI_MODEL_FAST;
+
+      process.env.GEMINI_API_KEY = 'test_api_key_123';
+      delete process.env.GEMINI_MODEL_FAST;
+
+      const { default: narrateHandler } = await import('../../../api/narrate.ts');
+      const { req, res, getStatusCode, getResponseData } = createMockReqRes('POST', validNarratePayload);
+
+      await narrateHandler(req, res);
+
+      expect(getStatusCode()).toBe(500);
+      expect(getResponseData()).toEqual({
+        error: 'GEMINI_MODEL_FAST must be configured in server environment.',
+        code: 'MISSING_MODEL_CONFIG',
+      });
+
+      process.env.GEMINI_API_KEY = origKey;
+      process.env.GEMINI_MODEL_FAST = origFast;
+    });
+
+    it('successfully calls GEMINI_MODEL_FAST with thinkingLevel LOW and returns modelUsed', async () => {
+      const origKey = process.env.GEMINI_API_KEY;
+      const origFast = process.env.GEMINI_MODEL_FAST;
+
+      process.env.GEMINI_API_KEY = 'test_api_key_123';
+      process.env.GEMINI_MODEL_FAST = 'gemini-3.5-flash-lite';
+
+      mockGenerateContent.mockResolvedValueOnce({
+        text: JSON.stringify({
+          commentary: 'High-priority Catering was protected at ₹3,25,000 while Venue was trimmed by ₹20,000. Low-priority categories absorbed the remaining deficit.',
+          riskAdvice: 'Timeline risk is elevated due to pending catering contracts. Finalize tasting sessions immediately.',
+        }),
+      });
+
+      const { default: narrateHandler } = await import('../../../api/narrate.ts');
+      const { req, res, getStatusCode, getResponseData } = createMockReqRes('POST', validNarratePayload);
+
+      await narrateHandler(req, res);
+
+      expect(getStatusCode()).toBe(200);
+      const data = getResponseData();
+      expect(data.success).toBe(true);
+      expect(data.modelUsed).toBe('gemini-3.5-flash-lite');
+      expect(data.data.commentary).toContain('High-priority Catering was protected');
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+      expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3.5-flash-lite');
+      expect(mockGenerateContent.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
+
+      process.env.GEMINI_API_KEY = origKey;
+      process.env.GEMINI_MODEL_FAST = origFast;
+    });
+  });
 });
+

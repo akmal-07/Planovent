@@ -270,3 +270,50 @@ export const RefineRequestSchema = z.object({
     deletedIds: z.array(z.string()).optional(),
   }),
 }).strict();
+
+export const NarrateCategorySummarySchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  priorityWeight: z.enum(PRIORITY_LEVELS),
+  currentSpend: z.number().int(),
+  projectedSpend: z.number().int(),
+  rebalancedSpend: z.number().int(),
+  delta: z.number().int(),
+  isLocked: z.boolean(),
+});
+
+export const NarrateRiskSummarySchema = z.object({
+  id: z.string(),
+  rule: z.string(),
+  severity: z.enum(['critical', 'warning', 'info']),
+  title: z.string(),
+  description: z.string(),
+});
+
+export const NarrateRequestSchema = z.object({
+  guestCount: z.number().int().positive(),
+  totalBudget: z.number().int().positive(),
+  styleMultiplier: z.number().positive(),
+  projectedDelta: z.number().int(),
+  isOverBudget: z.boolean(),
+  rebalancedCategories: z.array(NarrateCategorySummarySchema),
+  topRisks: z.array(NarrateRiskSummarySchema).optional().default([]),
+  tradeOffFacts: z.array(z.string()).optional().default([]),
+}).strict();
+
+export const AiNarrationResponseSchema = z.object({
+  commentary: z.string().min(5),
+  riskAdvice: z.string().min(5),
+}).strict();
+
+export type AiNarrationResponse = z.infer<typeof AiNarrationResponseSchema>;
+
+export const geminiNarrationResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    commentary: { type: Type.STRING },
+    riskAdvice: { type: Type.STRING },
+  },
+  required: ['commentary', 'riskAdvice'],
+};
+

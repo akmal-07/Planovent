@@ -113,3 +113,66 @@ export interface BudgetSummary {
   isOverBudget: boolean;        // remainingBudget < 0
   overBudgetAmount: number;     // Math.max(0, Σ(actual ?? estimated) - totalBudget)
 }
+
+export type RiskSeverity = 'critical' | 'warning' | 'info';
+
+export type RiskActionType =
+  | 'rebalance_budget'
+  | 'extend_deadline'
+  | 'complete_prerequisite'
+  | 'assign_owner'
+  | 'jump_to_vendors'
+  | 'none';
+
+export interface RiskItem {
+  id: string;
+  rule:
+    | 'plan_over_budget'
+    | 'category_overrun'
+    | 'overdue_tasks'
+    | 'blocked_tasks'
+    | 'unassigned_tasks'
+    | 'pending_vendors';
+  severity: RiskSeverity;
+  title: string;
+  description: string;
+  actionType: RiskActionType;
+  actionLabel: string;
+  targetId?: string;
+}
+
+export interface PlanHealthEvaluation {
+  score: number; // 0 to 100
+  status: 'Healthy' | 'Needs Attention' | 'At Risk';
+  risks: RiskItem[];
+}
+
+export interface WhatIfSimulationParams {
+  guestCount: number;
+  totalBudget: number;
+  styleMultiplier: number;
+  respectLocks: boolean;
+}
+
+export interface WhatIfCategoryResult {
+  key: BudgetCategoryKey;
+  label: string;
+  priorityWeight: PriorityLevel;
+  scalingType: ScalingType;
+  isLocked: boolean;
+  currentSpend: number;
+  projectedSpend: number;
+  rebalancedSpend: number;
+  delta: number;
+}
+
+export interface WhatIfSimulationResult {
+  params: WhatIfSimulationParams;
+  currentTotal: number;
+  projectedTotal: number;
+  rebalancedTotal: number;
+  categories: WhatIfCategoryResult[];
+  deficit: number;
+  isOverBudget: boolean;
+  tradeOffFacts: string[];
+}

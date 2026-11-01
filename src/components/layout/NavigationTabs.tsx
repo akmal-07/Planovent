@@ -8,6 +8,7 @@ interface NavigationTabsProps {
   onTabChange: (tab: ActiveTab) => void;
   taskCount: number;
   vendorSlotCount: number;
+  riskCount?: number;
 }
 
 export const NavigationTabs: React.FC<NavigationTabsProps> = ({
@@ -15,12 +16,14 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
   onTabChange,
   taskCount,
   vendorSlotCount,
+  riskCount = 0,
 }) => {
   const tabs: Array<{
     id: ActiveTab;
     label: string;
     icon: React.ElementType;
     badge?: number | string;
+    badgeVariant?: 'default' | 'danger' | 'warning' | 'success';
   }> = [
     {
       id: 'budget',
@@ -44,7 +47,8 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       id: 'simulator',
       label: 'What-If & Risk Radar',
       icon: Gauge,
-      badge: 'Bit 3 Preview',
+      badge: `${riskCount} Risks`,
+      badgeVariant: riskCount > 0 ? 'warning' : 'success',
     },
   ];
 
@@ -75,7 +79,11 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
                 {tab.badge !== undefined && (
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider ${
-                      isActive
+                      tab.badgeVariant === 'warning'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : tab.badgeVariant === 'success'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : isActive
                         ? 'bg-gold-500/20 text-gold-300 border border-gold-500/30'
                         : 'bg-stone-800 text-stone-400'
                     }`}

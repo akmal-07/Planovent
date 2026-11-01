@@ -15,12 +15,16 @@ import type {
   VendorSlot,
   VendorQuote,
   BudgetSummary,
+  PlanHealthEvaluation,
+  WhatIfSimulationResult,
 } from '../types/plan';
 import {
   computeBudgetSummary,
   updateWithAutoLock,
   toMatchKey,
+  formatINR,
 } from '../lib/calculations';
+import { evaluatePlanRisks } from '../lib/riskEngine';
 import { BENCHMARK_MOCK_PLAN } from '../lib/mockPlan';
 import { hydrateInitialPlan, mergeRefinedPlan } from '../lib/mergeEngine';
 import type { AiGeneratedPlan } from '../schemas/geminiSchema';
@@ -116,6 +120,12 @@ export function useWeddingPlan() {
   // Derived deterministic calculations (0ms client math)
   const summary: BudgetSummary = useMemo(() => {
     return computeBudgetSummary(plan);
+  }, [plan]);
+
+  // Derived deterministic risk evaluation (0ms client math)
+  const healthEvaluation: PlanHealthEvaluation = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    return evaluatePlanRisks(plan, todayStr);
   }, [plan]);
 
   // Clear snapshot on any manual user edit
@@ -518,6 +528,94 @@ export function useWeddingPlan() {
     });
   }, [clearSnapshot]);
 
+  // Apply What-If Scenario (Saves snapshot for 1-click Undo)
+  const applyWhatIfScenario = useCallback(
+    (mode: 'projected' | 'rebalanced', simulation: WhatIfSimulationResult) => {
+      createSnapshot();
+      setPlan((prev) => {
+        const resultMap = new Map(simulation.categories.map((c) => [c.key, c]));
+        const updatedBudget = prev.budget.map((cat) => {
+          const res = resultMap.get(cat.key);
+          if (!res) return cat;
+          const newEstimated = mode === 'projected' ? res.projectedSpend : res.rebalancedSpend;
+          return {
+            ...cat,
+            estimated: newEstimated,
+          };
+        });
+
+        return {
+          ...prev,
+          guestCount: simulation.params.guestCount,
+          totalBudget: simulation.params.totalBudget,
+          budget: updatedBudget,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      setAiSummary(
+        `Applied ${mode === 'projected' ? 'Projected' : 'Priority-Rebalanced'} scenario: ${simulation.params.guestCount} guests, ${formatINR(simulation.params.totalBudget)}.`
+      );
+    },
+    [createSnapshot]
+  );
+
+  // 1-Click Action Fix: Extend Task Deadline
+  const extendTaskDeadline = useCallback(
+    (taskId: string, days: number = 7) => {
+      clearSnapshot();
+      setPlan((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const current = new Date(task.deadline || new Date().toISOString().split('T')[0]);
+          const extended = new Date(current.getTime() + days * 86400000);
+          const newDeadline = extended.toISOString().split('T')[0];
+          return updateWithAutoLock(task, {
+            deadline: newDeadline,
+            source: 'user',
+          });
+        }),
+        updatedAt: new Date().toISOString(),
+      }));
+    },
+    [clearSnapshot]
+  );
+
+  // 1-Click Action Fix: Assign Task Owner
+  const assignTaskOwner = useCallback(
+    (taskId: string, assignee: string) => {
+      clearSnapshot();
+      setPlan((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((task) =>
+          task.id === taskId
+            ? updateWithAutoLock(task, { assignee: assignee.trim(), source: 'user' })
+            : task
+        ),
+        updatedAt: new Date().toISOString(),
+      }));
+    },
+    [clearSnapshot]
+  );
+
+  // 1-Click Action Fix: Complete Task Prerequisite
+  const completeTaskPrerequisite = useCallback(
+    (prereqTaskId: string) => {
+      clearSnapshot();
+      setPlan((prev) => ({
+        ...prev,
+        tasks: prev.tasks.map((task) =>
+          task.id === prereqTaskId
+            ? updateWithAutoLock(task, { done: true, source: 'user' })
+            : task
+        ),
+        updatedAt: new Date().toISOString(),
+      }));
+    },
+    [clearSnapshot]
+  );
+
   // AI Operation 1: Generate New Plan via Serverless /api/generate with 25s timeout
   const generateAiPlan = useCallback(
     async (userPrompt: string, context?: { city?: string; guestCount?: number; totalBudget?: number }): Promise<boolean> => {
@@ -623,6 +721,7 @@ export function useWeddingPlan() {
   return {
     plan,
     summary,
+    healthEvaluation,
     hasSnapshot: lastSnapshot !== null,
     isAiLoading,
     aiError,
@@ -645,6 +744,11 @@ export function useWeddingPlan() {
     finalizeVendorQuote,
     deleteVendorQuote,
     convertIdeaToTask,
+    // What-If & Risk Radar Operations
+    applyWhatIfScenario,
+    extendTaskDeadline,
+    assignTaskOwner,
+    completeTaskPrerequisite,
     // AI Operations
     generateAiPlan,
     refineAiPlan,
@@ -653,3 +757,4 @@ export function useWeddingPlan() {
     setPlanDirectly: setPlan,
   };
 }
+

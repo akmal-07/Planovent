@@ -7,7 +7,7 @@ function localApiMiddleware() {
     configureServer(server: any) {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         const url = req.url?.split('?')[0];
-        if (url === '/api/generate' || url === '/api/refine') {
+        if (url === '/api/generate' || url === '/api/refine' || url === '/api/narrate') {
           let body = '';
           req.on('data', (chunk: any) => {
             body += chunk;
@@ -43,6 +43,9 @@ function localApiMiddleware() {
                 await handler(req, mockRes);
               } else if (url === '/api/refine') {
                 const { default: handler } = await import('./api/refine.ts');
+                await handler(req, mockRes);
+              } else if (url === '/api/narrate') {
+                const { default: handler } = await import('./api/narrate.ts');
                 await handler(req, mockRes);
               }
             } catch (err: any) {
